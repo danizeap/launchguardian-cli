@@ -16,6 +16,7 @@ from .report_writer import DEFAULT_OUTPUT_DIR, write_normalized_findings, write_
 from .scanners.base import ScannerExecutionError
 from .scanners.gitleaks import GitleaksScanner
 from .scanners.semgrep import SemgrepScanner
+from .scanners.trivy import TrivyScanner
 
 
 EXIT_VALID = 0
@@ -224,7 +225,7 @@ def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
     counts: dict[str, int] = {}
     blocking_counts: dict[str, int] = {}
     failures: list[str] = []
-    for scanner in (GitleaksScanner(), SemgrepScanner()):
+    for scanner in (GitleaksScanner(), SemgrepScanner(), TrivyScanner()):
         try:
             result = scanner.scan(target, report_dir, strict_scanners=strict_scanners)
         except ScannerExecutionError as exc:

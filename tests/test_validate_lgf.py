@@ -191,7 +191,7 @@ def test_scan_command_writes_raw_normalized_markdown_and_json_reports(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[])
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
 
     exit_code = main(["scan", "--target", str(tmp_path)])
 
@@ -199,6 +199,7 @@ def test_scan_command_writes_raw_normalized_markdown_and_json_reports(
     report_dir = tmp_path / "reports" / "launchguardian"
     assert (report_dir / "raw" / "gitleaks-results.json").is_file()
     assert (report_dir / "raw" / "semgrep-results.json").is_file()
+    assert (report_dir / "raw" / "trivy-results.json").is_file()
     assert (report_dir / "normalized-findings.json").is_file()
     assert (report_dir / "launchguardian-report.md").is_file()
     assert (report_dir / "launchguardian-report.json").is_file()
@@ -410,6 +411,137 @@ def test_scan_writes_raw_semgrep_output_when_semgrep_runs(
     assert (tmp_path / "reports" / "launchguardian" / "raw" / "semgrep-results.json").is_file()
 
 
+def test_scan_trivy_missing_produces_scanner_unavailable_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=None)
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["launch_status"] == "INCOMPLETE"
+    assert report["scanner_availability"]["trivy"] == "unavailable"
+    assert any(
+        finding["title"] == "Trivy scanner unavailable"
+        and finding["category"] == "scanner_unavailable"
+        and finding["blocks_launch"] is False
+        for finding in report["findings"]
+    )
+
+
+def test_scan_mocked_trivy_critical_vulnerability_blocks_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[],
+        trivy_results=[
+            _trivy_result_with_vulnerability(
+                vulnerability_id="CVE-2099-0001",
+                severity="CRITICAL",
+                package_name="unsafe-lib",
+            )
+        ],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    trivy_findings = [finding for finding in report["findings"] if finding["source"] == "trivy"]
+    assert len(trivy_findings) == 1
+    assert trivy_findings[0]["severity"] == "critical"
+    assert trivy_findings[0]["blocks_launch"] is True
+    assert trivy_findings[0]["related_gate"] == "Gate 10 — Dependency, SBOM & Supply Chain"
+    assert trivy_findings[0]["package_name"] == "unsafe-lib"
+    assert trivy_findings[0]["vulnerability_id"] == "CVE-2099-0001"
+
+
+def test_scan_mocked_trivy_high_vulnerability_blocks_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[],
+        trivy_results=[
+            _trivy_result_with_vulnerability(
+                vulnerability_id="CVE-2099-0002",
+                severity="HIGH",
+                package_name="risky-lib",
+            )
+        ],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    trivy_findings = [finding for finding in report["findings"] if finding["source"] == "trivy"]
+    assert trivy_findings[0]["severity"] == "high"
+    assert trivy_findings[0]["blocks_launch"] is True
+
+
+def test_scan_mocked_trivy_medium_vulnerability_is_non_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[],
+        trivy_results=[
+            _trivy_result_with_vulnerability(
+                vulnerability_id="CVE-2099-0003",
+                severity="MEDIUM",
+                package_name="medium-lib",
+            )
+        ],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    trivy_findings = [finding for finding in report["findings"] if finding["source"] == "trivy"]
+    assert trivy_findings[0]["severity"] == "medium"
+    assert trivy_findings[0]["blocks_launch"] is False
+
+
+def test_scan_strict_scanners_makes_missing_trivy_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=None)
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        finding["title"] == "Trivy scanner unavailable"
+        and finding["blocks_launch"] is True
+        for finding in report["findings"]
+    )
+
+
+def test_scan_writes_raw_trivy_output_when_trivy_runs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert (tmp_path / "reports" / "launchguardian" / "raw" / "trivy-results.json").is_file()
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)
@@ -449,12 +581,15 @@ def _mock_scanners(
     *,
     gitleaks_findings: list[dict] | None,
     semgrep_findings: list[dict] | None,
+    trivy_results=(),
 ) -> None:
     def fake_which(name):
         if name == "gitleaks" and gitleaks_findings is not None:
             return "gitleaks"
         if name == "semgrep" and semgrep_findings is not None:
             return "semgrep"
+        if name == "trivy" and trivy_results is not None:
+            return "trivy"
         return None
 
     def fake_run(command, cwd, capture_output, text):
@@ -468,9 +603,36 @@ def _mock_scanners(
             report_path.parent.mkdir(parents=True, exist_ok=True)
             report_path.write_text(json.dumps({"results": semgrep_findings or []}), encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[0] == "trivy":
+            report_path = Path(command[command.index("--output") + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps({"Results": list(trivy_results or [])}), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected command")
 
     monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", fake_which)
     monkeypatch.setattr("launchguardian.scanners.semgrep.shutil.which", fake_which)
+    monkeypatch.setattr("launchguardian.scanners.trivy.shutil.which", fake_which)
     monkeypatch.setattr("launchguardian.scanners.gitleaks.subprocess.run", fake_run)
     monkeypatch.setattr("launchguardian.scanners.semgrep.subprocess.run", fake_run)
+    monkeypatch.setattr("launchguardian.scanners.trivy.subprocess.run", fake_run)
+
+
+def _trivy_result_with_vulnerability(
+    *, vulnerability_id: str, severity: str, package_name: str
+) -> dict:
+    return {
+        "Target": "requirements.txt",
+        "Type": "pip",
+        "Vulnerabilities": [
+            {
+                "VulnerabilityID": vulnerability_id,
+                "PkgName": package_name,
+                "InstalledVersion": "1.0.0",
+                "FixedVersion": "1.0.1",
+                "Severity": severity,
+                "Title": f"{package_name} vulnerability",
+                "Description": "Mock Trivy vulnerability for tests.",
+            }
+        ],
+    }

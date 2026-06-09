@@ -44,8 +44,10 @@ def _render_markdown(report: ValidationReport) -> str:
     scanner_blocking_counts = report.scanner_blocking_counts or {}
     gitleaks_count = scanner_counts.get("gitleaks", 0)
     semgrep_count = scanner_counts.get("semgrep", 0)
+    trivy_count = scanner_counts.get("trivy", 0)
     gitleaks_blocking_count = scanner_blocking_counts.get("gitleaks", 0)
     semgrep_blocking_count = scanner_blocking_counts.get("semgrep", 0)
+    trivy_blocking_count = scanner_blocking_counts.get("trivy", 0)
     blocking_findings = [
         finding for finding in report.findings if finding.blocks_launch and finding.status == "open"
     ]
@@ -67,6 +69,8 @@ def _render_markdown(report: ValidationReport) -> str:
         f"- Gitleaks blocking findings: **{gitleaks_blocking_count}**",
         f"- Semgrep findings: **{semgrep_count}**",
         f"- Semgrep blocking findings: **{semgrep_blocking_count}**",
+        f"- Trivy findings: **{trivy_count}**",
+        f"- Trivy blocking findings: **{trivy_blocking_count}**",
         f"- Total normalized scanner findings: **{scanner_finding_count}**",
         f"- Blocking findings: **{len(blocking_findings)}**",
         "",

@@ -25,6 +25,10 @@ class Finding:
     file_path: str = ""
     line: int | None = None
     endpoint: str = ""
+    package_name: str = ""
+    installed_version: str = ""
+    fixed_version: str = ""
+    vulnerability_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +40,10 @@ class Finding:
             "file_path": self.file_path,
             "line": self.line,
             "endpoint": self.endpoint,
+            "package_name": self.package_name,
+            "installed_version": self.installed_version,
+            "fixed_version": self.fixed_version,
+            "vulnerability_id": self.vulnerability_id,
             "description": self.description,
             "risk": self.risk,
             "recommendation": self.recommendation,

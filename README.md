@@ -31,7 +31,7 @@ reports/launchguardian/
 
 ## Current Scope
 
-LaunchGuardian currently supports local Gitleaks secret scanning and local Semgrep static code security scanning. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
+LaunchGuardian currently supports local Gitleaks secret scanning, local Semgrep static code security scanning, and local Trivy dependency/filesystem/container/IaC scanning. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
 
 ## Exit Codes
 
@@ -69,7 +69,8 @@ Reports are generated under the target project by default:
 |-- normalized-findings.json
 `-- raw/
     |-- gitleaks-results.json
-    `-- semgrep-results.json
+    |-- semgrep-results.json
+    `-- trivy-results.json
 ```
 
 The JSON report includes schema metadata, `validation_mode`, `scan_mode`, `lgf_validation_skipped`, `strict_scanners`, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
@@ -92,13 +93,15 @@ launchguardian scan --target . --skip-lgf-validation
 launchguardian scan --target . --strict-scanners
 ```
 
-If Gitleaks and Semgrep are installed, LaunchGuardian runs:
+If Gitleaks, Semgrep, and Trivy are installed, LaunchGuardian runs:
 
 - LGF validation.
 - Local Gitleaks secret scanning against the target path.
 - Local Semgrep static code security scanning against the target path.
+- Local Trivy dependency, filesystem, container, and IaC scanning against the target path.
 - Raw Gitleaks JSON output to `reports/launchguardian/raw/gitleaks-results.json`.
 - Raw Semgrep JSON output to `reports/launchguardian/raw/semgrep-results.json`.
+- Raw Trivy JSON output to `reports/launchguardian/raw/trivy-results.json`.
 - Normalized findings to `reports/launchguardian/normalized-findings.json`.
 - Markdown and JSON launch reports.
 
@@ -106,7 +109,9 @@ If Gitleaks is not installed, LaunchGuardian emits a `scanner_unavailable` findi
 
 If Semgrep is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 3 — Code Security`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
 
-Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks or Semgrep sets `blocks_launch: true` and exits with code `1`.
+If Trivy is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 10 — Dependency, SBOM & Supply Chain`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
+
+Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks, Semgrep, or Trivy sets `blocks_launch: true` and exits with code `1`.
 
 Secret values are not copied into normalized findings. LaunchGuardian runs Gitleaks with redaction enabled and avoids using raw `Secret` or `Match` values when creating normalized report entries.
 
@@ -128,12 +133,27 @@ Semgrep checks source code for static security signals such as unsafe APIs, inje
 
 Semgrep findings are static analysis signals and may require human review to confirm impact, false positives, accepted risk, or remediation priority.
 
+## Trivy Scanning
+
+Install Trivy before running dependency, filesystem, container, and IaC scans. On Windows, use the official Trivy install options such as Scoop, Chocolatey, or a downloaded release binary.
+
+LaunchGuardian invokes Trivy locally with:
+
+```bash
+trivy fs --format json --output <raw_output_path> <target>
+```
+
+Trivy checks dependency manifests, lockfiles, filesystem contents, container-related files, and IaC/configuration files for known vulnerabilities, misconfigurations, and secret findings. LaunchGuardian maps Critical and High Trivy vulnerability findings to blocking findings, Medium and Low vulnerability findings to non-blocking review items, IaC/config misconfigurations to `Gate 11 — Infrastructure, DNS, TLS & Web Hardening`, and Trivy secret findings to Critical blocking findings under `Gate 4 — Secrets & Config Hygiene`.
+
+Trivy findings may require human review. Dependency updates can introduce compatibility changes, so remediation should include appropriate regression testing before release.
+
 ## Current Limitations
 
-- Only the Gitleaks and Semgrep scanners are implemented.
+- Only the Gitleaks, Semgrep, and Trivy scanners are implemented.
 - No active web scanning is implemented.
 - No offensive tooling is included.
 - Semgrep findings are static analysis signals and may require review.
+- Trivy findings may require review, and dependency updates may need compatibility testing.
 - `validate-lgf` only validates required LGF files and high-risk skipped gate confirmation.
 - `validate-lgf --framework-mode` validates template presence only; it is not a project launch decision.
 - `scan --framework-mode` scans framework, template, or tool repos without requiring project-specific LGF files.
