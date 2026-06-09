@@ -139,14 +139,14 @@ def test_scan_gitleaks_missing_produces_scanner_unavailable_finding(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: None)
+    _mock_scanners(monkeypatch, gitleaks_findings=None, semgrep_findings=[])
 
     exit_code = main(["scan", "--target", str(tmp_path)])
 
     assert exit_code == EXIT_VALID
     report = _read_report(tmp_path)
     assert report["launch_status"] == "INCOMPLETE"
-    assert report["scanner_availability"] == {"gitleaks": "unavailable"}
+    assert report["scanner_availability"]["gitleaks"] == "unavailable"
     assert any(
         finding["title"] == "Gitleaks scanner unavailable"
         and finding["category"] == "scanner_unavailable"
@@ -159,9 +159,9 @@ def test_scan_mocked_gitleaks_secret_produces_critical_blocking_finding(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    _mock_gitleaks_with_findings(
+    _mock_scanners(
         monkeypatch,
-        [
+        gitleaks_findings=[
             {
                 "RuleID": "generic-api-key",
                 "Description": "Generic API key",
@@ -171,6 +171,7 @@ def test_scan_mocked_gitleaks_secret_produces_critical_blocking_finding(
                 "Match": "API_KEY=super-secret-token",
             }
         ],
+        semgrep_findings=[],
     )
 
     exit_code = main(["scan", "--target", str(tmp_path)])
@@ -190,13 +191,14 @@ def test_scan_command_writes_raw_normalized_markdown_and_json_reports(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    _mock_gitleaks_with_findings(monkeypatch, [])
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[])
 
     exit_code = main(["scan", "--target", str(tmp_path)])
 
     assert exit_code == EXIT_VALID
     report_dir = tmp_path / "reports" / "launchguardian"
     assert (report_dir / "raw" / "gitleaks-results.json").is_file()
+    assert (report_dir / "raw" / "semgrep-results.json").is_file()
     assert (report_dir / "normalized-findings.json").is_file()
     assert (report_dir / "launchguardian-report.md").is_file()
     assert (report_dir / "launchguardian-report.json").is_file()
@@ -204,9 +206,9 @@ def test_scan_command_writes_raw_normalized_markdown_and_json_reports(
 
 def test_scan_exits_1_when_critical_secret_is_found(tmp_path: Path, monkeypatch) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    _mock_gitleaks_with_findings(
+    _mock_scanners(
         monkeypatch,
-        [
+        gitleaks_findings=[
             {
                 "RuleID": "private-key",
                 "File": "id_rsa",
@@ -214,6 +216,7 @@ def test_scan_exits_1_when_critical_secret_is_found(tmp_path: Path, monkeypatch)
                 "Secret": "-----BEGIN PRIVATE KEY-----",
             }
         ],
+        semgrep_findings=[],
     )
 
     exit_code = main(["scan", "--target", str(tmp_path)])
@@ -226,7 +229,7 @@ def test_scan_exits_1_when_critical_secret_is_found(tmp_path: Path, monkeypatch)
 def test_scan_framework_mode_does_not_require_project_lgf_files(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: None)
+    _mock_scanners(monkeypatch, gitleaks_findings=None, semgrep_findings=None)
 
     exit_code = main(["scan", "--target", str(tmp_path), "--framework-mode"])
 
@@ -244,7 +247,7 @@ def test_scan_framework_mode_does_not_require_project_lgf_files(
 def test_scan_skip_lgf_validation_writes_clear_skipped_status(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _mock_gitleaks_with_findings(monkeypatch, [])
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[])
 
     exit_code = main(["scan", "--target", str(tmp_path), "--skip-lgf-validation"])
 
@@ -260,7 +263,7 @@ def test_scan_strict_scanners_makes_missing_gitleaks_blocking(
     tmp_path: Path, monkeypatch
 ) -> None:
     _write_required_files(tmp_path, gate_applicability="gates: []\n")
-    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: None)
+    _mock_scanners(monkeypatch, gitleaks_findings=None, semgrep_findings=[])
 
     exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
 
@@ -278,7 +281,7 @@ def test_scan_strict_scanners_makes_missing_gitleaks_blocking(
 def test_default_scan_missing_lgf_files_remains_blocked(
     tmp_path: Path, monkeypatch
 ) -> None:
-    _mock_gitleaks_with_findings(monkeypatch, [])
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[])
 
     exit_code = main(["scan", "--target", str(tmp_path)])
 
@@ -291,6 +294,120 @@ def test_default_scan_missing_lgf_files_remains_blocked(
         finding["title"] == "Required LGF file is missing"
         for finding in report["findings"]
     )
+
+
+def test_scan_semgrep_missing_produces_scanner_unavailable_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=None)
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["launch_status"] == "INCOMPLETE"
+    assert report["scanner_availability"]["semgrep"] == "unavailable"
+    assert any(
+        finding["title"] == "Semgrep scanner unavailable"
+        and finding["category"] == "scanner_unavailable"
+        and finding["blocks_launch"] is False
+        for finding in report["findings"]
+    )
+
+
+def test_scan_mocked_semgrep_high_finding_blocks_launch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.sql-injection",
+                "path": "app.py",
+                "start": {"line": 12},
+                "extra": {
+                    "severity": "ERROR",
+                    "message": "Possible SQL injection.",
+                    "metadata": {"category": "security", "technology": ["sql-injection"]},
+                },
+            }
+        ],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    semgrep_findings = [finding for finding in report["findings"] if finding["source"] == "semgrep"]
+    assert len(semgrep_findings) == 1
+    assert semgrep_findings[0]["severity"] == "high"
+    assert semgrep_findings[0]["blocks_launch"] is True
+    assert semgrep_findings[0]["related_gate"] == "Gate 7 — Injection & Input Safety"
+    assert report["scanner_counts"]["semgrep"] == 1
+    assert report["scanner_blocking_counts"]["semgrep"] == 1
+
+
+def test_scan_mocked_semgrep_medium_finding_is_non_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.audit",
+                "path": "app.py",
+                "start": {"line": 4},
+                "extra": {
+                    "severity": "WARNING",
+                    "message": "Review this security-sensitive code path.",
+                    "metadata": {"category": "security"},
+                },
+            }
+        ],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    semgrep_findings = [finding for finding in report["findings"] if finding["source"] == "semgrep"]
+    assert len(semgrep_findings) == 1
+    assert semgrep_findings[0]["severity"] == "medium"
+    assert semgrep_findings[0]["blocks_launch"] is False
+
+
+def test_scan_strict_scanners_makes_missing_semgrep_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=None)
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        finding["title"] == "Semgrep scanner unavailable"
+        and finding["blocks_launch"] is True
+        for finding in report["findings"]
+    )
+
+
+def test_scan_writes_raw_semgrep_output_when_semgrep_runs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert (tmp_path / "reports" / "launchguardian" / "raw" / "semgrep-results.json").is_file()
 
 
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
@@ -327,13 +444,33 @@ def _read_report(tmp_path: Path) -> dict:
     return json.loads(report_path.read_text(encoding="utf-8"))
 
 
-def _mock_gitleaks_with_findings(monkeypatch, findings: list[dict]) -> None:
-    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: "gitleaks")
+def _mock_scanners(
+    monkeypatch,
+    *,
+    gitleaks_findings: list[dict] | None,
+    semgrep_findings: list[dict] | None,
+) -> None:
+    def fake_which(name):
+        if name == "gitleaks" and gitleaks_findings is not None:
+            return "gitleaks"
+        if name == "semgrep" and semgrep_findings is not None:
+            return "semgrep"
+        return None
 
     def fake_run(command, cwd, capture_output, text):
-        report_path = Path(command[command.index("--report-path") + 1])
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(findings), encoding="utf-8")
-        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[0] == "gitleaks":
+            report_path = Path(command[command.index("--report-path") + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps(gitleaks_findings or []), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        if command[0] == "semgrep":
+            report_path = Path(command[command.index("--output") + 1])
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(json.dumps({"results": semgrep_findings or []}), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="unexpected command")
 
+    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", fake_which)
+    monkeypatch.setattr("launchguardian.scanners.semgrep.shutil.which", fake_which)
     monkeypatch.setattr("launchguardian.scanners.gitleaks.subprocess.run", fake_run)
+    monkeypatch.setattr("launchguardian.scanners.semgrep.subprocess.run", fake_run)

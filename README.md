@@ -31,7 +31,7 @@ reports/launchguardian/
 
 ## Current Scope
 
-LaunchGuardian currently supports local Gitleaks secret scanning only. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
+LaunchGuardian currently supports local Gitleaks secret scanning and local Semgrep static code security scanning. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
 
 ## Exit Codes
 
@@ -68,7 +68,8 @@ Reports are generated under the target project by default:
 |-- launchguardian-report.json
 |-- normalized-findings.json
 `-- raw/
-    `-- gitleaks-results.json
+    |-- gitleaks-results.json
+    `-- semgrep-results.json
 ```
 
 The JSON report includes schema metadata, `validation_mode`, `scan_mode`, `lgf_validation_skipped`, `strict_scanners`, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
@@ -80,7 +81,7 @@ launchguardian validate-lgf --target . --output-dir reports/launchguardian
 launchguardian scan --target . --output-dir reports/launchguardian
 ```
 
-## Gitleaks Scanning
+## Local Scanning
 
 Run a local scan against a project you control:
 
@@ -91,25 +92,48 @@ launchguardian scan --target . --skip-lgf-validation
 launchguardian scan --target . --strict-scanners
 ```
 
-If Gitleaks is installed, LaunchGuardian runs:
+If Gitleaks and Semgrep are installed, LaunchGuardian runs:
 
 - LGF validation.
 - Local Gitleaks secret scanning against the target path.
+- Local Semgrep static code security scanning against the target path.
 - Raw Gitleaks JSON output to `reports/launchguardian/raw/gitleaks-results.json`.
+- Raw Semgrep JSON output to `reports/launchguardian/raw/semgrep-results.json`.
 - Normalized findings to `reports/launchguardian/normalized-findings.json`.
 - Markdown and JSON launch reports.
 
 If Gitleaks is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 4 — Secrets & Config Hygiene`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
 
-Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks sets `blocks_launch: true` and exits with code `1`.
+If Semgrep is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 3 — Code Security`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
+
+Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks or Semgrep sets `blocks_launch: true` and exits with code `1`.
 
 Secret values are not copied into normalized findings. LaunchGuardian runs Gitleaks with redaction enabled and avoids using raw `Secret` or `Match` values when creating normalized report entries.
 
+## Semgrep Scanning
+
+Install Semgrep before running static code scans:
+
+```bash
+python -m pip install semgrep
+```
+
+LaunchGuardian invokes Semgrep locally with:
+
+```bash
+semgrep scan --config auto --json --output <raw_output_path> <target>
+```
+
+Semgrep checks source code for static security signals such as unsafe APIs, injection patterns, auth/session mistakes, and other rule-driven code risks. LaunchGuardian maps High/Critical Semgrep results to blocking High findings, while Medium and Low findings are tracked but do not block by default.
+
+Semgrep findings are static analysis signals and may require human review to confirm impact, false positives, accepted risk, or remediation priority.
+
 ## Current Limitations
 
-- Only the Gitleaks scanner is implemented.
+- Only the Gitleaks and Semgrep scanners are implemented.
 - No active web scanning is implemented.
 - No offensive tooling is included.
+- Semgrep findings are static analysis signals and may require review.
 - `validate-lgf` only validates required LGF files and high-risk skipped gate confirmation.
 - `validate-lgf --framework-mode` validates template presence only; it is not a project launch decision.
 - `scan --framework-mode` scans framework, template, or tool repos without requiring project-specific LGF files.

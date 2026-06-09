@@ -15,6 +15,7 @@ from .models import ValidationReport
 from .report_writer import DEFAULT_OUTPUT_DIR, write_normalized_findings, write_reports
 from .scanners.base import ScannerExecutionError
 from .scanners.gitleaks import GitleaksScanner
+from .scanners.semgrep import SemgrepScanner
 
 
 EXIT_VALID = 0
@@ -159,32 +160,10 @@ def scan_target(
         framework_mode=framework_mode,
         skip_lgf_validation=skip_lgf_validation,
     )
-    scanner = GitleaksScanner()
-    try:
-        scanner_result = scanner.scan(
-            config.target, report_dir, strict_scanners=strict_scanners
-        )
-    except ScannerExecutionError as exc:
-        failure_report = ValidationReport(
-            target=config.target,
-            mode=validation_mode,
-            validation_mode=validation_mode,
-            scan_mode="local",
-            lgf_validation_skipped=skip_lgf_validation,
-            strict_scanners=strict_scanners,
-            findings=lgf_findings,
-            lgf_config_valid=not _has_blocking_open_findings(lgf_findings),
-            scanner_availability={"gitleaks": "execution_failed"},
-            scanner_counts={"gitleaks": 0},
-        )
-        markdown_path, json_path = write_reports(failure_report, output_dir)
-        write_normalized_findings(failure_report.findings, report_dir)
-        print(f"LaunchGuardian report written: {markdown_path}")
-        print(f"LaunchGuardian JSON written: {json_path}")
-        print(f"LaunchGuardian scanner failure: {exc}")
-        return EXIT_TOOL_FAILURE
-
-    findings = [*lgf_findings, *scanner_result.findings]
+    scanner_findings, scanner_availability, scanner_counts, scanner_blocking_counts, scanner_failures = (
+        _run_scanners(config.target, report_dir, strict_scanners=strict_scanners)
+    )
+    findings = [*lgf_findings, *scanner_findings]
     report = ValidationReport(
         target=config.target,
         mode=validation_mode,
@@ -194,10 +173,9 @@ def scan_target(
         strict_scanners=strict_scanners,
         findings=findings,
         lgf_config_valid=not _has_blocking_open_findings(lgf_findings),
-        scanner_availability={
-            "gitleaks": "available" if scanner_result.available else "unavailable"
-        },
-        scanner_counts={"gitleaks": scanner_result.detected_count},
+        scanner_availability=scanner_availability,
+        scanner_counts=scanner_counts,
+        scanner_blocking_counts=scanner_blocking_counts,
     )
     markdown_path, json_path = write_reports(report, output_dir)
     normalized_path = write_normalized_findings(report.findings, report_dir)
@@ -206,6 +184,9 @@ def scan_target(
     print(f"LaunchGuardian JSON written: {json_path}")
     print(f"LaunchGuardian normalized findings written: {normalized_path}")
     print(f"LaunchGuardian status: {report.launch_status}")
+    if scanner_failures:
+        print("LaunchGuardian scanner failure: " + "; ".join(scanner_failures))
+        return EXIT_TOOL_FAILURE
     if report.blocked:
         return EXIT_BLOCKED
     return EXIT_VALID
@@ -235,6 +216,33 @@ def _scan_validation_mode(*, framework_mode: bool, skip_lgf_validation: bool) ->
     if framework_mode:
         return "framework"
     return "project"
+
+
+def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
+    findings = []
+    availability: dict[str, str] = {}
+    counts: dict[str, int] = {}
+    blocking_counts: dict[str, int] = {}
+    failures: list[str] = []
+    for scanner in (GitleaksScanner(), SemgrepScanner()):
+        try:
+            result = scanner.scan(target, report_dir, strict_scanners=strict_scanners)
+        except ScannerExecutionError as exc:
+            availability[scanner.name] = "failed"
+            counts[scanner.name] = 0
+            blocking_counts[scanner.name] = 0
+            failures.append(f"{scanner.name}: {exc}")
+            continue
+
+        findings.extend(result.findings)
+        availability[result.name] = "ran" if result.available else "unavailable"
+        counts[result.name] = result.detected_count
+        blocking_counts[result.name] = sum(
+            1
+            for finding in result.findings
+            if finding.blocks_launch and finding.status == "open"
+        )
+    return findings, availability, counts, blocking_counts, failures
 
 
 def _has_blocking_open_findings(findings) -> bool:

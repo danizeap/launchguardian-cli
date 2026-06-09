@@ -41,10 +41,15 @@ def write_normalized_findings(findings: list[Finding], output_dir: Path) -> Path
 def _render_markdown(report: ValidationReport) -> str:
     scanner_availability = report.scanner_availability or {"none": "not_run"}
     scanner_counts = report.scanner_counts or {}
+    scanner_blocking_counts = report.scanner_blocking_counts or {}
     gitleaks_count = scanner_counts.get("gitleaks", 0)
+    semgrep_count = scanner_counts.get("semgrep", 0)
+    gitleaks_blocking_count = scanner_blocking_counts.get("gitleaks", 0)
+    semgrep_blocking_count = scanner_blocking_counts.get("semgrep", 0)
     blocking_findings = [
         finding for finding in report.findings if finding.blocks_launch and finding.status == "open"
     ]
+    scanner_finding_count = sum(scanner_counts.values())
     lines = [
         "# LaunchGuardian Report",
         "",
@@ -59,6 +64,10 @@ def _render_markdown(report: ValidationReport) -> str:
         "- Scanner availability: "
         + ", ".join(f"`{name}: {status}`" for name, status in scanner_availability.items()),
         f"- Gitleaks findings: **{gitleaks_count}**",
+        f"- Gitleaks blocking findings: **{gitleaks_blocking_count}**",
+        f"- Semgrep findings: **{semgrep_count}**",
+        f"- Semgrep blocking findings: **{semgrep_blocking_count}**",
+        f"- Total normalized scanner findings: **{scanner_finding_count}**",
         f"- Blocking findings: **{len(blocking_findings)}**",
         "",
         "## Findings",
