@@ -1,0 +1,61 @@
+name: LaunchGuardian
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  launchguardian:
+    name: LaunchGuardian strict scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install LaunchGuardian
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # Future package usage:
+          # python -m pip install launchguardian
+          #
+          # Until LaunchGuardian is published, install from the implementation repo.
+          # Replace the URL/ref with your pinned fork, branch, tag, or commit.
+          python -m pip install "git+https://github.com/danizeap/launchguardian-cli.git@main"
+          #
+          # If this workflow runs inside the launchguardian-cli repo itself, use:
+          # python -m pip install -e .
+
+      - name: Optionally install external scanners
+        shell: bash
+        run: |
+          # Strict scanner mode blocks when expected external scanners are missing.
+          # Pin scanner versions using your organization's approved install method.
+          #
+          # Semgrep can be installed with pip:
+          # python -m pip install semgrep
+          #
+          # Gitleaks and Trivy should be installed from pinned release binaries,
+          # package-manager packages, or approved setup actions before relying on
+          # this strict workflow as a release gate.
+          echo "External scanner installation is intentionally project-controlled."
+
+      - name: Run LaunchGuardian strict scan
+        shell: bash
+        run: launchguardian scan --target . --strict-scanners
+
+      - name: Upload LaunchGuardian reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchguardian-reports
+          path: reports/launchguardian
+          if-no-files-found: warn

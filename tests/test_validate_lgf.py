@@ -1094,6 +1094,24 @@ severity_policy:
     )
 
 
+def test_github_actions_workflow_templates_exist_and_run_launchguardian() -> None:
+    root = Path(__file__).resolve().parents[1]
+    strict_workflow = root / "templates" / "github-actions" / "launchguardian.yml"
+    nonstrict_workflow = root / "templates" / "github-actions" / "launchguardian-nonstrict.yml"
+
+    assert strict_workflow.is_file()
+    assert nonstrict_workflow.is_file()
+
+    strict_text = strict_workflow.read_text(encoding="utf-8")
+    nonstrict_text = nonstrict_workflow.read_text(encoding="utf-8")
+
+    assert "launchguardian scan" in strict_text
+    assert "--strict-scanners" in strict_text
+    assert "actions/upload-artifact" in strict_text
+    assert "launchguardian scan" in nonstrict_text
+    assert "actions/upload-artifact" in nonstrict_text
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)

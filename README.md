@@ -84,6 +84,15 @@ launchguardian validate-lgf --target . --output-dir reports/launchguardian
 launchguardian scan --target . --output-dir reports/launchguardian
 ```
 
+## CI Usage
+
+LaunchGuardian can run in GitHub Actions before the package is published. Workflow templates live under `templates/github-actions/`:
+
+- `templates/github-actions/launchguardian.yml` runs `launchguardian scan --target . --strict-scanners` and is intended for release-quality CI.
+- `templates/github-actions/launchguardian-nonstrict.yml` runs without strict scanner mode and is intended for early adoption only.
+
+Both workflows upload `reports/launchguardian` as a GitHub Actions artifact. See `docs/ci.md` for local repo usage, future pip package usage, framework/tool repo mode, strict scanner behavior, and `launchguardian.yml` tuning guidance.
+
 ## Local Scanning
 
 Run a local scan against a project you control:
