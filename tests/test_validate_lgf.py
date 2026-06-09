@@ -200,6 +200,7 @@ def test_scan_command_writes_raw_normalized_markdown_and_json_reports(
     assert (report_dir / "raw" / "gitleaks-results.json").is_file()
     assert (report_dir / "raw" / "semgrep-results.json").is_file()
     assert (report_dir / "raw" / "trivy-results.json").is_file()
+    assert (report_dir / "raw" / "frontend-exposure-results.json").is_file()
     assert (report_dir / "normalized-findings.json").is_file()
     assert (report_dir / "launchguardian-report.md").is_file()
     assert (report_dir / "launchguardian-report.json").is_file()
@@ -542,6 +543,146 @@ def test_scan_writes_raw_trivy_output_when_trivy_runs(
     assert (tmp_path / "reports" / "launchguardian" / "raw" / "trivy-results.json").is_file()
 
 
+def test_frontend_source_map_produces_medium_non_blocking_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "app.js.map").write_text("{}", encoding="utf-8")
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    findings = _frontend_findings(tmp_path)
+    assert any(
+        finding["title"] == "Frontend source map present"
+        and finding["severity"] == "medium"
+        and finding["blocks_launch"] is False
+        for finding in findings
+    )
+
+
+def test_frontend_public_secret_env_name_blocks_without_value(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    (tmp_path / ".env.local").write_text("NEXT_PUBLIC_SECRET=super-secret-value\n", encoding="utf-8")
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report_text = json.dumps(_read_report(tmp_path))
+    findings = _frontend_findings(tmp_path)
+    assert "super-secret-value" not in report_text
+    assert any(
+        finding["title"] == "Frontend-exposed secret-like environment variable"
+        and finding["severity"] == "critical"
+        and finding["blocks_launch"] is True
+        and finding["related_gate"] == "Gate 4 — Secrets & Config Hygiene"
+        for finding in findings
+    )
+
+
+def test_frontend_vite_private_key_blocks_without_value(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    (tmp_path / "src.ts").write_text(
+        "const key = import.meta.env.VITE_PRIVATE_KEY;\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _frontend_findings(tmp_path)
+    assert any(
+        finding["title"] == "Frontend-exposed secret-like environment variable"
+        and finding["severity"] == "critical"
+        and finding["blocks_launch"] is True
+        for finding in findings
+    )
+
+
+def test_frontend_local_storage_token_usage_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    (tmp_path / "app.js").write_text('localStorage.setItem("token", token);\n', encoding="utf-8")
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _frontend_findings(tmp_path)
+    assert any(
+        finding["title"] == "Sensitive-looking browser storage usage"
+        and finding["severity"] == "high"
+        and finding["blocks_launch"] is True
+        and finding["related_gate"] == "Gate 8 — Auth, Sessions & CSRF"
+        for finding in findings
+    )
+
+
+def test_frontend_public_env_reference_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    public_dir = tmp_path / "public"
+    public_dir.mkdir()
+    (public_dir / "config.js").write_text('fetch("/.env.production");\n', encoding="utf-8")
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _frontend_findings(tmp_path)
+    assert any(
+        finding["title"] == "Private-looking asset in public frontend output"
+        and finding["severity"] == "high"
+        and finding["blocks_launch"] is True
+        and finding["related_gate"] == "Gate 5 — Frontend Exposure"
+        for finding in findings
+    )
+
+
+def test_frontend_ignored_directories_are_not_scanned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    ignored_dir = tmp_path / "node_modules"
+    ignored_dir.mkdir()
+    (ignored_dir / "bundle.js.map").write_text("{}", encoding="utf-8")
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert _frontend_findings(tmp_path) == []
+
+
+def test_scan_writes_raw_frontend_exposure_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert (
+        tmp_path
+        / "reports"
+        / "launchguardian"
+        / "raw"
+        / "frontend-exposure-results.json"
+    ).is_file()
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)
@@ -574,6 +715,14 @@ def _write_framework_files(tmp_path: Path) -> None:
 def _read_report(tmp_path: Path) -> dict:
     report_path = tmp_path / "reports" / "launchguardian" / "launchguardian-report.json"
     return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def _frontend_findings(tmp_path: Path) -> list[dict]:
+    return [
+        finding
+        for finding in _read_report(tmp_path)["findings"]
+        if finding["source"] == "frontend_exposure"
+    ]
 
 
 def _mock_scanners(

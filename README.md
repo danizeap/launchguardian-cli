@@ -31,7 +31,7 @@ reports/launchguardian/
 
 ## Current Scope
 
-LaunchGuardian currently supports local Gitleaks secret scanning, local Semgrep static code security scanning, and local Trivy dependency/filesystem/container/IaC scanning. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
+LaunchGuardian currently supports local Gitleaks secret scanning, local Semgrep static code security scanning, local Trivy dependency/filesystem/container/IaC scanning, and a native frontend exposure scanner. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
 
 ## Exit Codes
 
@@ -70,7 +70,8 @@ Reports are generated under the target project by default:
 `-- raw/
     |-- gitleaks-results.json
     |-- semgrep-results.json
-    `-- trivy-results.json
+    |-- trivy-results.json
+    `-- frontend-exposure-results.json
 ```
 
 The JSON report includes schema metadata, `validation_mode`, `scan_mode`, `lgf_validation_skipped`, `strict_scanners`, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
@@ -93,15 +94,17 @@ launchguardian scan --target . --skip-lgf-validation
 launchguardian scan --target . --strict-scanners
 ```
 
-If Gitleaks, Semgrep, and Trivy are installed, LaunchGuardian runs:
+LaunchGuardian runs its native frontend exposure scanner without external dependencies. If Gitleaks, Semgrep, and Trivy are installed, LaunchGuardian also runs those scanner integrations:
 
 - LGF validation.
 - Local Gitleaks secret scanning against the target path.
 - Local Semgrep static code security scanning against the target path.
 - Local Trivy dependency, filesystem, container, and IaC scanning against the target path.
+- Native frontend exposure checks against likely frontend source and build output files.
 - Raw Gitleaks JSON output to `reports/launchguardian/raw/gitleaks-results.json`.
 - Raw Semgrep JSON output to `reports/launchguardian/raw/semgrep-results.json`.
 - Raw Trivy JSON output to `reports/launchguardian/raw/trivy-results.json`.
+- Raw frontend exposure JSON output to `reports/launchguardian/raw/frontend-exposure-results.json`.
 - Normalized findings to `reports/launchguardian/normalized-findings.json`.
 - Markdown and JSON launch reports.
 
@@ -111,7 +114,7 @@ If Semgrep is not installed, LaunchGuardian emits a `scanner_unavailable` findin
 
 If Trivy is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 10 — Dependency, SBOM & Supply Chain`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
 
-Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks, Semgrep, or Trivy sets `blocks_launch: true` and exits with code `1`.
+Use `--strict-scanners` when missing expected external scanners should block. In strict mode, missing Gitleaks, Semgrep, or Trivy sets `blocks_launch: true` and exits with code `1`.
 
 Secret values are not copied into normalized findings. LaunchGuardian runs Gitleaks with redaction enabled and avoids using raw `Secret` or `Match` values when creating normalized report entries.
 
@@ -147,13 +150,28 @@ Trivy checks dependency manifests, lockfiles, filesystem contents, container-rel
 
 Trivy findings may require human review. Dependency updates can introduce compatibility changes, so remediation should include appropriate regression testing before release.
 
+## Frontend Exposure Scanning
+
+LaunchGuardian includes a native frontend exposure scanner that does not require external tools. It recursively inspects likely frontend source files and build outputs such as `.html`, `.js`, `.jsx`, `.ts`, `.tsx`, `.map`, `.env*`, `vite.config.*`, `next.config.*`, `package.json`, and files under `public/`, `dist/`, `build/`, `.next/`, and `out/`.
+
+The scanner checks for:
+
+- Source maps committed or shipped in frontend output.
+- Secret-looking public frontend environment variable names such as `NEXT_PUBLIC_SECRET`, `VITE_PRIVATE_KEY`, or `REACT_APP_TOKEN`.
+- Hardcoded localhost, staging, or debug references.
+- Sensitive-looking `localStorage` or `sessionStorage` usage for tokens, JWTs, passwords, secrets, or API keys.
+- Private-looking files or `.env` references under public/build output directories.
+
+Public frontend prefixes such as `NEXT_PUBLIC_`, `VITE_`, and `REACT_APP_` are intentionally exposed to browser code by their frameworks. They must never contain secrets, tokens, private keys, passwords, or client secrets. LaunchGuardian reports only the variable name, file path, line number, and safe explanation; it does not copy raw secret values into normalized findings.
+
 ## Current Limitations
 
-- Only the Gitleaks, Semgrep, and Trivy scanners are implemented.
+- Only the Gitleaks, Semgrep, Trivy, and frontend exposure scanners are implemented.
 - No active web scanning is implemented.
 - No offensive tooling is included.
 - Semgrep findings are static analysis signals and may require review.
 - Trivy findings may require review, and dependency updates may need compatibility testing.
+- Frontend exposure findings may require review to distinguish intentional development-only references from production exposure.
 - `validate-lgf` only validates required LGF files and high-risk skipped gate confirmation.
 - `validate-lgf --framework-mode` validates template presence only; it is not a project launch decision.
 - `scan --framework-mode` scans framework, template, or tool repos without requiring project-specific LGF files.
