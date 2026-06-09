@@ -23,6 +23,22 @@ python -m pip install -e .
 launchguardian scan --target . --framework-mode
 ```
 
+## This Repo's Dogfood Workflow
+
+The `launchguardian-cli` repo dogfoods LaunchGuardian with `.github/workflows/launchguardian.yml`. That workflow installs the checked-out repo in editable dev mode and runs:
+
+```bash
+python -m launchguardian.cli scan --target . --framework-mode
+```
+
+It intentionally does not use `--strict-scanners` yet. The CLI repo is a framework/tool repo, and CI runners may not have Gitleaks, Semgrep, or Trivy installed. In this dogfood workflow, unavailable external scanners should be visible in the report as incomplete coverage, but they should not fail the workflow while the project is still before installer and scanner setup automation.
+
+Keep the strict template for real onboarded projects that have approved scanner installation steps:
+
+```text
+templates/github-actions/launchguardian.yml
+```
+
 For another project before package publishing, install from a pinned GitHub URL:
 
 ```bash

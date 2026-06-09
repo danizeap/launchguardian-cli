@@ -1194,6 +1194,23 @@ def test_github_actions_workflow_templates_exist_and_run_launchguardian() -> Non
     assert "actions/upload-artifact" in nonstrict_text
 
 
+def test_repo_github_actions_workflows_exist_and_run_expected_commands() -> None:
+    root = Path(__file__).resolve().parents[1]
+    tests_workflow = root / ".github" / "workflows" / "tests.yml"
+    launchguardian_workflow = root / ".github" / "workflows" / "launchguardian.yml"
+
+    assert tests_workflow.is_file()
+    assert launchguardian_workflow.is_file()
+
+    tests_text = tests_workflow.read_text(encoding="utf-8")
+    launchguardian_text = launchguardian_workflow.read_text(encoding="utf-8")
+
+    assert "python -m pytest" in tests_text
+    assert "python -m launchguardian.cli scan --target . --framework-mode" in launchguardian_text
+    assert "--strict-scanners" not in launchguardian_text
+    assert "actions/upload-artifact" in launchguardian_text
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)

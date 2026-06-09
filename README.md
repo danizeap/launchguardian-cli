@@ -135,6 +135,10 @@ LaunchGuardian can run in GitHub Actions before the package is published. Workfl
 
 Both workflows upload `reports/launchguardian` as a GitHub Actions artifact. See `docs/ci.md` for local repo usage, future pip package usage, framework/tool repo mode, strict scanner behavior, and `launchguardian.yml` tuning guidance.
 
+## Project CI
+
+This repo runs Python tests and a LaunchGuardian framework-mode scan in GitHub Actions. The dogfood scan uploads `reports/launchguardian` as an artifact and intentionally does not use strict scanner mode until external scanner installation is wired into CI.
+
 ## Local Scanning
 
 Run a local scan against a project you control:
