@@ -6,7 +6,11 @@ Implemented commands:
 
 ```bash
 launchguardian validate-lgf --target .
+launchguardian validate-lgf --target . --framework-mode
 launchguardian scan --target .
+launchguardian scan --target . --framework-mode
+launchguardian scan --target . --skip-lgf-validation
+launchguardian scan --target . --strict-scanners
 ```
 
 Framework/template repos can be validated without pretending templates are project truth:
@@ -23,7 +27,7 @@ reports/launchguardian/
 `-- launchguardian-report.json
 ```
 
-`scan` runs LGF validation first, then runs the currently supported scanner integrations.
+`scan` runs LGF validation first by default, then runs the currently supported scanner integrations.
 
 ## Current Scope
 
@@ -50,6 +54,10 @@ Missing project LGF files mean the project is incomplete for LaunchGuardian vali
 
 If the target is the SDD+ starter or another framework/template repo, use `--framework-mode`. Framework mode validates expected LaunchGuardian specs/templates and does not treat templates as project-specific launch evidence.
 
+For `scan`, `--framework-mode` is more permissive: it treats the target as a framework, template, or tool repo, skips project-specific LGF file requirements, and still runs local scanners.
+
+Use `--skip-lgf-validation` only when you intentionally want scanner results without LGF project records. Reports will set `lgf_validation_skipped: true` and use `SCANNED_WITHOUT_LGF` or `INCOMPLETE` instead of `APPROVED`.
+
 ## Reports
 
 Reports are generated under the target project by default:
@@ -63,7 +71,7 @@ Reports are generated under the target project by default:
     `-- gitleaks-results.json
 ```
 
-The JSON report includes schema metadata, validation mode, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
+The JSON report includes schema metadata, `validation_mode`, `scan_mode`, `lgf_validation_skipped`, `strict_scanners`, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
 
 Use `--output-dir` to write reports somewhere else:
 
@@ -78,6 +86,9 @@ Run a local scan against a project you control:
 
 ```bash
 launchguardian scan --target .
+launchguardian scan --target . --framework-mode
+launchguardian scan --target . --skip-lgf-validation
+launchguardian scan --target . --strict-scanners
 ```
 
 If Gitleaks is installed, LaunchGuardian runs:
@@ -90,6 +101,8 @@ If Gitleaks is installed, LaunchGuardian runs:
 
 If Gitleaks is not installed, LaunchGuardian emits a `scanner_unavailable` finding for `Gate 4 — Secrets & Config Hygiene`. In local mode this warning does not block launch by itself, but the report status is `INCOMPLETE` so the missing scan is visible.
 
+Use `--strict-scanners` when missing expected scanners should block. In strict mode, missing Gitleaks sets `blocks_launch: true` and exits with code `1`.
+
 Secret values are not copied into normalized findings. LaunchGuardian runs Gitleaks with redaction enabled and avoids using raw `Secret` or `Match` values when creating normalized report entries.
 
 ## Current Limitations
@@ -98,7 +111,8 @@ Secret values are not copied into normalized findings. LaunchGuardian runs Gitle
 - No active web scanning is implemented.
 - No offensive tooling is included.
 - `validate-lgf` only validates required LGF files and high-risk skipped gate confirmation.
-- Framework mode validates template presence only; it is not a project launch decision.
+- `validate-lgf --framework-mode` validates template presence only; it is not a project launch decision.
+- `scan --framework-mode` scans framework, template, or tool repos without requiring project-specific LGF files.
 
 ## Development
 
@@ -106,5 +120,9 @@ Secret values are not copied into normalized findings. LaunchGuardian runs Gitle
 python -m pip install -e ".[dev]"
 python -m pytest
 python -m launchguardian.cli validate-lgf --target .
+python -m launchguardian.cli validate-lgf --target . --framework-mode
 python -m launchguardian.cli scan --target .
+python -m launchguardian.cli scan --target . --framework-mode
+python -m launchguardian.cli scan --target . --skip-lgf-validation
+python -m launchguardian.cli scan --target . --strict-scanners
 ```

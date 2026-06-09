@@ -223,6 +223,76 @@ def test_scan_exits_1_when_critical_secret_is_found(tmp_path: Path, monkeypatch)
     assert report["launch_status"] == "BLOCKED"
 
 
+def test_scan_framework_mode_does_not_require_project_lgf_files(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: None)
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--framework-mode"])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["validation_mode"] == "framework"
+    assert report["scan_mode"] == "local"
+    assert report["launch_status"] == "INCOMPLETE"
+    assert not any(
+        finding["title"] == "Required LGF file is missing"
+        for finding in report["findings"]
+    )
+
+
+def test_scan_skip_lgf_validation_writes_clear_skipped_status(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _mock_gitleaks_with_findings(monkeypatch, [])
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--skip-lgf-validation"])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["validation_mode"] == "skipped"
+    assert report["lgf_validation_skipped"] is True
+    assert report["lgf_validation_status"] == "skipped"
+    assert report["launch_status"] == "SCANNED_WITHOUT_LGF"
+
+
+def test_scan_strict_scanners_makes_missing_gitleaks_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", lambda _: None)
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert report["strict_scanners"] is True
+    assert report["launch_status"] == "BLOCKED"
+    assert any(
+        finding["title"] == "Gitleaks scanner unavailable"
+        and finding["blocks_launch"] is True
+        for finding in report["findings"]
+    )
+
+
+def test_default_scan_missing_lgf_files_remains_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _mock_gitleaks_with_findings(monkeypatch, [])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert report["validation_mode"] == "project"
+    assert report["lgf_config_valid"] is False
+    assert report["launch_status"] == "BLOCKED"
+    assert any(
+        finding["title"] == "Required LGF file is missing"
+        for finding in report["findings"]
+    )
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)

@@ -19,7 +19,7 @@ class GitleaksScanner:
     def is_available(self) -> bool:
         return shutil.which("gitleaks") is not None
 
-    def scan(self, target: Path, report_dir: Path) -> ScannerResult:
+    def scan(self, target: Path, report_dir: Path, *, strict_scanners: bool = False) -> ScannerResult:
         raw_dir = report_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
         raw_output_path = raw_dir / "gitleaks-results.json"
@@ -29,7 +29,7 @@ class GitleaksScanner:
                 name=self.name,
                 available=False,
                 raw_output_path=raw_output_path,
-                findings=[_scanner_unavailable_finding()],
+                findings=[_scanner_unavailable_finding(blocks_launch=strict_scanners)],
             )
 
         command = [
@@ -63,7 +63,7 @@ class GitleaksScanner:
         )
 
 
-def _scanner_unavailable_finding() -> Finding:
+def _scanner_unavailable_finding(*, blocks_launch: bool = False) -> Finding:
     return Finding(
         title="Gitleaks scanner unavailable",
         severity="medium",
@@ -74,7 +74,7 @@ def _scanner_unavailable_finding() -> Finding:
         risk="Secrets may exist in the target repository without being detected by this local scan.",
         recommendation="Install Gitleaks and rerun `launchguardian scan --target .` before relying on scan results.",
         related_gate=GITLEAKS_RELATED_GATE,
-        blocks_launch=False,
+        blocks_launch=blocks_launch,
     )
 
 

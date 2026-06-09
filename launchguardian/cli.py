@@ -52,6 +52,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Validate LaunchGuardian framework/templates and run local scanner availability checks.",
     )
+    scan.add_argument(
+        "--skip-lgf-validation",
+        action="store_true",
+        help="Skip LGF config validation and run local scanners only.",
+    )
+    scan.add_argument(
+        "--strict-scanners",
+        action="store_true",
+        help="Treat missing expected scanners as blocking findings.",
+    )
     return parser
 
 
@@ -70,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.target),
             Path(args.output_dir) if args.output_dir else None,
             framework_mode=args.framework_mode,
+            skip_lgf_validation=args.skip_lgf_validation,
+            strict_scanners=args.strict_scanners,
         )
 
     parser.error(f"Unsupported command: {args.command}")
@@ -84,6 +96,7 @@ def validate_lgf(
         report = ValidationReport(
             target=target.resolve(),
             mode="framework" if framework_mode else "project",
+            validation_mode="framework" if framework_mode else "project",
             findings=[target_finding],
             lgf_config_valid=False,
         )
@@ -96,6 +109,7 @@ def validate_lgf(
     report = ValidationReport(
         target=config.target,
         mode="framework" if framework_mode else "project",
+        validation_mode="framework" if framework_mode else "project",
         findings=findings,
         lgf_config_valid=not _has_blocking_open_findings(findings),
     )
@@ -111,15 +125,27 @@ def validate_lgf(
 
 
 def scan_target(
-    target: Path, output_dir: Path | None = None, *, framework_mode: bool = False
+    target: Path,
+    output_dir: Path | None = None,
+    *,
+    framework_mode: bool = False,
+    skip_lgf_validation: bool = False,
+    strict_scanners: bool = False,
 ) -> int:
     target_finding = validate_target(target)
     report_target = target.resolve()
     report_dir = output_dir or report_target / DEFAULT_OUTPUT_DIR
+    validation_mode = _scan_validation_mode(
+        framework_mode=framework_mode, skip_lgf_validation=skip_lgf_validation
+    )
     if target_finding is not None:
         report = ValidationReport(
             target=report_target,
-            mode="framework" if framework_mode else "project",
+            mode=validation_mode,
+            validation_mode=validation_mode,
+            scan_mode="local",
+            lgf_validation_skipped=skip_lgf_validation,
+            strict_scanners=strict_scanners,
             findings=[target_finding],
             lgf_config_valid=False,
         )
@@ -128,14 +154,24 @@ def scan_target(
         return EXIT_CONFIG_ERROR
 
     config = discover_config(target)
-    lgf_findings = _lgf_findings(config, framework_mode=framework_mode)
+    lgf_findings = _scan_lgf_findings(
+        config,
+        framework_mode=framework_mode,
+        skip_lgf_validation=skip_lgf_validation,
+    )
     scanner = GitleaksScanner()
     try:
-        scanner_result = scanner.scan(config.target, report_dir)
+        scanner_result = scanner.scan(
+            config.target, report_dir, strict_scanners=strict_scanners
+        )
     except ScannerExecutionError as exc:
         failure_report = ValidationReport(
             target=config.target,
-            mode="framework" if framework_mode else "project",
+            mode=validation_mode,
+            validation_mode=validation_mode,
+            scan_mode="local",
+            lgf_validation_skipped=skip_lgf_validation,
+            strict_scanners=strict_scanners,
             findings=lgf_findings,
             lgf_config_valid=not _has_blocking_open_findings(lgf_findings),
             scanner_availability={"gitleaks": "execution_failed"},
@@ -151,7 +187,11 @@ def scan_target(
     findings = [*lgf_findings, *scanner_result.findings]
     report = ValidationReport(
         target=config.target,
-        mode="framework" if framework_mode else "project",
+        mode=validation_mode,
+        validation_mode=validation_mode,
+        scan_mode="local",
+        lgf_validation_skipped=skip_lgf_validation,
+        strict_scanners=strict_scanners,
         findings=findings,
         lgf_config_valid=not _has_blocking_open_findings(lgf_findings),
         scanner_availability={
@@ -179,6 +219,22 @@ def _lgf_findings(config, *, framework_mode: bool):
         findings.extend(missing_file_findings(config))
         findings.extend(validate_gate_applicability(config.gate_applicability))
     return findings
+
+
+def _scan_lgf_findings(config, *, framework_mode: bool, skip_lgf_validation: bool):
+    if skip_lgf_validation:
+        return []
+    if framework_mode:
+        return []
+    return _lgf_findings(config, framework_mode=False)
+
+
+def _scan_validation_mode(*, framework_mode: bool, skip_lgf_validation: bool) -> str:
+    if skip_lgf_validation:
+        return "skipped"
+    if framework_mode:
+        return "framework"
+    return "project"
 
 
 def _has_blocking_open_findings(findings) -> bool:

@@ -59,6 +59,10 @@ class DiscoveredConfig:
 class ValidationReport:
     target: Path
     mode: str = "project"
+    validation_mode: str = "project"
+    scan_mode: str = "none"
+    lgf_validation_skipped: bool = False
+    strict_scanners: bool = False
     findings: list[Finding] = field(default_factory=list)
     lgf_config_valid: bool = True
     scanner_availability: dict[str, str] = field(default_factory=dict)
@@ -80,12 +84,20 @@ class ValidationReport:
             for status in self.scanner_availability.values()
         ):
             return "INCOMPLETE"
+        if self.lgf_validation_skipped:
+            return "SCANNED_WITHOUT_LGF"
         if any(
             finding.status == "open" and finding.category == "scanner_unavailable"
             for finding in self.findings
         ):
             return "INCOMPLETE"
         return "APPROVED"
+
+    @property
+    def lgf_validation_status(self) -> str:
+        if self.lgf_validation_skipped:
+            return "skipped"
+        return "valid" if self.lgf_config_valid else "blocked"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,8 +107,13 @@ class ValidationReport:
             "launchguardian_version": "0.1.0",
             "target": str(self.target),
             "mode": self.mode,
+            "validation_mode": self.validation_mode,
+            "scan_mode": self.scan_mode,
+            "lgf_validation_skipped": self.lgf_validation_skipped,
+            "strict_scanners": self.strict_scanners,
             "launch_status": self.launch_status,
             "lgf_config_valid": self.lgf_config_valid,
+            "lgf_validation_status": self.lgf_validation_status,
             "scanner_availability": self.scanner_availability,
             "scanner_counts": self.scanner_counts,
             "blocked": self.blocked,

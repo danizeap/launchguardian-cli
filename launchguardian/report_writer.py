@@ -42,17 +42,24 @@ def _render_markdown(report: ValidationReport) -> str:
     scanner_availability = report.scanner_availability or {"none": "not_run"}
     scanner_counts = report.scanner_counts or {}
     gitleaks_count = scanner_counts.get("gitleaks", 0)
+    blocking_findings = [
+        finding for finding in report.findings if finding.blocks_launch and finding.status == "open"
+    ]
     lines = [
         "# LaunchGuardian Report",
         "",
         f"- Target: `{report.target}`",
         f"- Mode: `{report.mode}`",
+        f"- Validation mode: `{report.validation_mode}`",
+        f"- Scan mode: `{report.scan_mode}`",
         f"- Generated at: `{report.generated_at}`",
         f"- Launch status: **{report.launch_status}**",
-        f"- LGF config validation: **{'valid' if report.lgf_config_valid else 'blocked'}**",
+        f"- LGF validation status: **{report.lgf_validation_status}**",
+        f"- Strict scanners: **{str(report.strict_scanners).lower()}**",
         "- Scanner availability: "
         + ", ".join(f"`{name}: {status}`" for name, status in scanner_availability.items()),
         f"- Gitleaks findings: **{gitleaks_count}**",
+        f"- Blocking findings: **{len(blocking_findings)}**",
         "",
         "## Findings",
         "",
