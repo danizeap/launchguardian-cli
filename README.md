@@ -26,6 +26,7 @@ python -m launchguardian.cli scan --target . --strict-scanners
 
 More release and usage docs:
 
+- [v0.1.0 release notes](docs/releases/v0.1.0.md)
 - [MVP scope](docs/mvp.md)
 - [CI usage](docs/ci.md)
 - [Changelog](CHANGELOG.md)

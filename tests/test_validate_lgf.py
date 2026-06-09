@@ -96,10 +96,18 @@ def test_version_command_returns_current_version(capsys) -> None:
 
 def test_release_docs_exist() -> None:
     root = Path(__file__).resolve().parents[1]
+    release_notes = root / "docs" / "releases" / "v0.1.0.md"
 
     assert (root / "CHANGELOG.md").is_file()
     assert (root / "RELEASE_CHECKLIST.md").is_file()
     assert (root / "docs" / "mvp.md").is_file()
+    assert release_notes.is_file()
+
+    release_text = release_notes.read_text(encoding="utf-8")
+    readme_text = (root / "README.md").read_text(encoding="utf-8")
+    assert "v0.1.0" in release_text
+    assert "Safe-Use Boundaries" in release_text
+    assert "docs/releases/v0.1.0.md" in readme_text
 
 
 def test_sample_demo_reports_exist_are_sanitized_and_blocked() -> None:
