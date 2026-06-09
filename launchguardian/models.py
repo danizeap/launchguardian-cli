@@ -60,6 +60,9 @@ class ValidationReport:
     target: Path
     mode: str = "project"
     findings: list[Finding] = field(default_factory=list)
+    lgf_config_valid: bool = True
+    scanner_availability: dict[str, str] = field(default_factory=dict)
+    scanner_counts: dict[str, int] = field(default_factory=dict)
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
@@ -67,6 +70,22 @@ class ValidationReport:
     @property
     def blocked(self) -> bool:
         return any(finding.blocks_launch and finding.status == "open" for finding in self.findings)
+
+    @property
+    def launch_status(self) -> str:
+        if self.blocked:
+            return "BLOCKED"
+        if any(
+            status in {"unavailable", "execution_failed"}
+            for status in self.scanner_availability.values()
+        ):
+            return "INCOMPLETE"
+        if any(
+            finding.status == "open" and finding.category == "scanner_unavailable"
+            for finding in self.findings
+        ):
+            return "INCOMPLETE"
+        return "APPROVED"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +95,10 @@ class ValidationReport:
             "launchguardian_version": "0.1.0",
             "target": str(self.target),
             "mode": self.mode,
+            "launch_status": self.launch_status,
+            "lgf_config_valid": self.lgf_config_valid,
+            "scanner_availability": self.scanner_availability,
+            "scanner_counts": self.scanner_counts,
             "blocked": self.blocked,
             "findings": [finding.to_dict() for finding in self.findings],
         }

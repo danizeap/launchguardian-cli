@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .models import ValidationReport
+from .models import Finding, ValidationReport
 
 
 DEFAULT_OUTPUT_DIR = Path("reports") / "launchguardian"
@@ -21,15 +21,38 @@ def write_reports(report: ValidationReport, output_dir: Path | None = None) -> t
     return markdown_path, json_path
 
 
+def write_normalized_findings(findings: list[Finding], output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    normalized_path = output_dir / "normalized-findings.json"
+    normalized_path.write_text(
+        json.dumps(
+            {
+                "schema_name": "launchguardian.normalized_findings",
+                "schema_version": "0.1.0",
+                "findings": [finding.to_dict() for finding in findings],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return normalized_path
+
+
 def _render_markdown(report: ValidationReport) -> str:
-    status = "BLOCKED" if report.blocked else "VALID"
+    scanner_availability = report.scanner_availability or {"none": "not_run"}
+    scanner_counts = report.scanner_counts or {}
+    gitleaks_count = scanner_counts.get("gitleaks", 0)
     lines = [
         "# LaunchGuardian Report",
         "",
         f"- Target: `{report.target}`",
         f"- Mode: `{report.mode}`",
         f"- Generated at: `{report.generated_at}`",
-        f"- Status: **{status}**",
+        f"- Launch status: **{report.launch_status}**",
+        f"- LGF config validation: **{'valid' if report.lgf_config_valid else 'blocked'}**",
+        "- Scanner availability: "
+        + ", ".join(f"`{name}: {status}`" for name, status in scanner_availability.items()),
+        f"- Gitleaks findings: **{gitleaks_count}**",
         "",
         "## Findings",
         "",
