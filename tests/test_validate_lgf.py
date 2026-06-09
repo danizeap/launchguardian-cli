@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from launchguardian.cli import EXIT_BLOCKED, EXIT_VALID, main
+
+
+def test_missing_gate_applicability_file(tmp_path: Path) -> None:
+    security_dir = tmp_path / "sdd-plus" / "security"
+    security_dir.mkdir(parents=True)
+    (security_dir / "scope-contract.yml").write_text("project: test\n", encoding="utf-8")
+    (security_dir / "launch-decision.md").write_text("# Launch Decision\n", encoding="utf-8")
+
+    exit_code = main(["validate-lgf", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert report["blocked"] is True
+    assert any("gate-applicability.yml" in finding["file_path"] for finding in report["findings"])
+
+
+def test_high_risk_skipped_gate_missing_confirmation(tmp_path: Path) -> None:
+    _write_required_files(
+        tmp_path,
+        gate_applicability="""
+gates:
+  - gate_id: 14
+    gate_name: "Gate 14 — Privacy, Legal & Data Lifecycle"
+    applies: false
+    confidence: "high"
+    reason: ""
+    evidence: []
+""",
+    )
+
+    exit_code = main(["validate-lgf", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        finding["title"] == "High-risk skipped gate is missing human confirmation"
+        for finding in report["findings"]
+    )
+
+
+def test_valid_high_risk_skip(tmp_path: Path) -> None:
+    _write_required_files(
+        tmp_path,
+        gate_applicability="""
+gates:
+  - gate_id: 14
+    gate_name: "Gate 14 — Privacy, Legal & Data Lifecycle"
+    applies: false
+    confidence: "high"
+    human_confirmation_required: true
+    confirmed_by: "Owner"
+    confirmed_at: "2026-06-09"
+    reason: "No personal or sensitive data is processed."
+    evidence:
+      - type: "human_statement"
+        detail: "Owner confirmed no personal data exists."
+""",
+    )
+
+    exit_code = main(["validate-lgf", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["blocked"] is False
+    assert report["findings"] == []
+
+
+def test_report_generation(tmp_path: Path) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+
+    exit_code = main(["validate-lgf", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report_dir = tmp_path / "reports" / "launchguardian"
+    assert (report_dir / "launchguardian-report.md").is_file()
+    assert (report_dir / "launchguardian-report.json").is_file()
+
+
+def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
+    security_dir = tmp_path / "sdd-plus" / "security"
+    security_dir.mkdir(parents=True)
+    (security_dir / "gate-applicability.yml").write_text(gate_applicability, encoding="utf-8")
+    (security_dir / "scope-contract.yml").write_text("project: test\n", encoding="utf-8")
+    (security_dir / "launch-decision.md").write_text("# Launch Decision\n", encoding="utf-8")
+
+
+def _read_report(tmp_path: Path) -> dict:
+    report_path = tmp_path / "reports" / "launchguardian" / "launchguardian-report.json"
+    return json.loads(report_path.read_text(encoding="utf-8"))
