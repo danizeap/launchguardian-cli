@@ -42,6 +42,11 @@ def _render_markdown(report: ValidationReport) -> str:
     scanner_availability = report.scanner_availability or {"none": "not_run"}
     scanner_counts = report.scanner_counts or {}
     scanner_blocking_counts = report.scanner_blocking_counts or {}
+    lg_config = report.launchguardian_config or {}
+    exclude_config = lg_config.get("exclude", {}) if isinstance(lg_config.get("exclude"), dict) else {}
+    disabled_scanners = lg_config.get("disabled_scanners", {})
+    severity_policy = lg_config.get("severity_policy", {})
+    config_findings = [finding for finding in report.findings if finding.source == "config"]
     gitleaks_count = scanner_counts.get("gitleaks", 0)
     semgrep_count = scanner_counts.get("semgrep", 0)
     trivy_count = scanner_counts.get("trivy", 0)
@@ -67,6 +72,29 @@ def _render_markdown(report: ValidationReport) -> str:
         f"- Launch status: **{report.launch_status}**",
         f"- LGF validation status: **{report.lgf_validation_status}**",
         f"- Strict scanners: **{str(report.strict_scanners).lower()}**",
+        f"- Config file found: **{str(bool(lg_config.get('found'))).lower()}**",
+        f"- Config file: `{lg_config.get('path', '') or 'not found'}`",
+        f"- Configured output dir: `{lg_config.get('configured_output_dir', '') or 'reports/launchguardian'}`",
+        f"- Effective output dir: `{lg_config.get('effective_output_dir', '') or 'reports/launchguardian'}`",
+        "- Disabled scanners: "
+        + (
+            ", ".join(f"`{name}: {reason}`" for name, reason in disabled_scanners.items())
+            if disabled_scanners
+            else "`none`"
+        ),
+        "- Active exclusions: "
+        + "`paths="
+        + ", ".join(exclude_config.get("paths", []))
+        + "; globs="
+        + ", ".join(exclude_config.get("globs", []))
+        + "`",
+        "- Severity policy: "
+        + (
+            ", ".join(f"`{name}: {str(value).lower()}`" for name, value in severity_policy.items())
+            if severity_policy
+            else "`default`"
+        ),
+        f"- Config warnings/blockers: **{len(config_findings)}**",
         "- Scanner availability: "
         + ", ".join(f"`{name}: {status}`" for name, status in scanner_availability.items()),
         f"- Gitleaks findings: **{gitleaks_count}**",

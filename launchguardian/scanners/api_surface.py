@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from ..config import LaunchGuardianConfig, is_excluded
 from ..models import Finding
 from .base import ScannerResult
 
@@ -93,6 +94,9 @@ POLICY_GUARD_COMMENT_PATTERN = re.compile(
 class ApiSurfaceScanner:
     name = "api_surface"
 
+    def __init__(self, config: LaunchGuardianConfig | None = None) -> None:
+        self.config = config
+
     def scan(self, target: Path, report_dir: Path, *, strict_scanners: bool = False) -> ScannerResult:
         raw_dir = report_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +104,7 @@ class ApiSurfaceScanner:
 
         raw_results: list[dict] = []
         findings: list[Finding] = []
-        for path in _iter_api_files(target):
+        for path in _iter_api_files(target, self.config):
             relative_path = path.relative_to(target)
             lines = list(_safe_read_lines(path))
             route_lines = _route_lines(relative_path, lines)
@@ -159,19 +163,21 @@ class ApiSurfaceScanner:
         )
 
 
-def _iter_api_files(target: Path):
+def _iter_api_files(target: Path, config: LaunchGuardianConfig | None = None):
     for path in target.rglob("*"):
-        if not path.is_file() or _is_ignored(path, target):
+        if not path.is_file() or _is_ignored(path, target, config):
             continue
         if path.suffix.lower() in API_SUFFIXES and _is_likely_api_file(path, target):
             yield path
 
 
-def _is_ignored(path: Path, target: Path) -> bool:
+def _is_ignored(path: Path, target: Path, config: LaunchGuardianConfig | None = None) -> bool:
     relative_parts = path.relative_to(target).parts
     if any(part in IGNORED_DIRECTORIES for part in relative_parts):
         return True
-    return any(_has_part_sequence(relative_parts, ignored) for ignored in IGNORED_PARTS)
+    if any(_has_part_sequence(relative_parts, ignored) for ignored in IGNORED_PARTS):
+        return True
+    return bool(config and is_excluded(path, target, config))
 
 
 def _is_likely_api_file(path: Path, target: Path) -> bool:

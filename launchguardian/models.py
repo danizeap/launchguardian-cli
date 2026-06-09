@@ -78,6 +78,7 @@ class ValidationReport:
     scanner_availability: dict[str, str] = field(default_factory=dict)
     scanner_counts: dict[str, int] = field(default_factory=dict)
     scanner_blocking_counts: dict[str, int] = field(default_factory=dict)
+    launchguardian_config: dict[str, Any] = field(default_factory=dict)
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
@@ -91,7 +92,7 @@ class ValidationReport:
         if self.blocked:
             return "BLOCKED"
         if any(
-            status in {"unavailable", "execution_failed", "failed"}
+            status in {"unavailable", "execution_failed", "failed", "disabled"}
             for status in self.scanner_availability.values()
         ):
             return "INCOMPLETE"
@@ -128,6 +129,7 @@ class ValidationReport:
             "scanner_availability": self.scanner_availability,
             "scanner_counts": self.scanner_counts,
             "scanner_blocking_counts": self.scanner_blocking_counts,
+            "launchguardian_config": self.launchguardian_config,
             "blocked": self.blocked,
             "findings": [finding.to_dict() for finding in self.findings],
         }

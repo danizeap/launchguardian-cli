@@ -880,6 +880,220 @@ def test_scan_writes_raw_api_surface_output(
     ).is_file()
 
 
+def test_scan_no_config_file_uses_defaults(tmp_path: Path, monkeypatch) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["launchguardian_config"]["found"] is False
+    assert report["launchguardian_config"]["configured_output_dir"] == "reports\\launchguardian"
+    assert report["launchguardian_config"]["exclude"]["paths"] == [
+        "node_modules",
+        ".git",
+        "reports/launchguardian",
+    ]
+    assert report["launchguardian_config"]["severity_policy"]["critical_blocks"] is True
+
+
+def test_scan_config_output_dir_is_honored(tmp_path: Path, monkeypatch) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scan:
+  output_dir: custom-reports/lg
+""",
+    )
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert (tmp_path / "custom-reports" / "lg" / "launchguardian-report.json").is_file()
+
+
+def test_scan_cli_output_dir_overrides_config(tmp_path: Path, monkeypatch) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scan:
+  output_dir: custom-reports/lg
+""",
+    )
+    cli_output = tmp_path / "cli-reports"
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--output-dir", str(cli_output)])
+
+    assert exit_code == EXIT_VALID
+    assert (cli_output / "launchguardian-report.json").is_file()
+    assert not (tmp_path / "custom-reports" / "lg" / "launchguardian-report.json").exists()
+
+
+def test_disabled_native_scanner_does_not_run_and_is_reported(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scanners:
+  frontend_exposure:
+    enabled: false
+    reason: "Frontend review handled separately."
+""",
+    )
+    (tmp_path / "app.js").write_text('localStorage.setItem("token", token);\n', encoding="utf-8")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["scanner_availability"]["frontend_exposure"] == "disabled"
+    assert not any(finding["source"] == "frontend_exposure" for finding in report["findings"])
+    assert any(
+        finding["title"] == "Frontend Exposure scanner disabled by config"
+        and finding["blocks_launch"] is False
+        for finding in report["findings"]
+    )
+
+
+def test_disabled_external_scanner_is_not_reported_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scanners:
+  gitleaks:
+    enabled: false
+    reason: "Temporary local tooling exception."
+""",
+    )
+    _mock_scanners(monkeypatch, gitleaks_findings=None, semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["scanner_availability"]["gitleaks"] == "disabled"
+    assert not any(finding["title"] == "Gitleaks scanner unavailable" for finding in report["findings"])
+    assert any(
+        finding["title"] == "Gitleaks scanner disabled by config"
+        and finding["blocks_launch"] is False
+        for finding in report["findings"]
+    )
+
+
+def test_strict_mode_blocks_disabled_external_scanner_without_allowance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scanners:
+  semgrep:
+    enabled: false
+    reason: "Temporary exception."
+""",
+    )
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=None, trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert report["scanner_availability"]["semgrep"] == "disabled"
+    assert any(
+        finding["title"] == "Semgrep scanner disabled by config"
+        and finding["blocks_launch"] is True
+        for finding in report["findings"]
+    )
+
+
+def test_strict_mode_allows_disabled_external_scanner_with_reason_and_allowance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+scanners:
+  trivy:
+    enabled: false
+    allow_disabled_in_strict: true
+    reason: "Dependency scan is handled in a separate release job."
+""",
+    )
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=None)
+
+    exit_code = main(["scan", "--target", str(tmp_path), "--strict-scanners"])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["scanner_availability"]["trivy"] == "disabled"
+    assert any(
+        finding["title"] == "Trivy scanner disabled by config"
+        and finding["blocks_launch"] is False
+        for finding in report["findings"]
+    )
+
+
+def test_config_exclusions_prevent_native_scanner_findings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+exclude:
+  paths:
+    - frontend
+  globs: []
+""",
+    )
+    frontend_dir = tmp_path / "frontend"
+    frontend_dir.mkdir()
+    (frontend_dir / "app.js").write_text('localStorage.setItem("token", token);\n', encoding="utf-8")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert _frontend_findings(tmp_path) == []
+
+
+def test_critical_blocks_false_creates_blocking_config_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+severity_policy:
+  critical_blocks: false
+""",
+    )
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        finding["title"] == "Critical findings cannot be configured as non-blocking"
+        and finding["blocks_launch"] is True
+        for finding in report["findings"]
+    )
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)
@@ -907,6 +1121,10 @@ def _write_framework_files(tmp_path: Path) -> None:
         security_dir / "launch-decision.template.md",
     ):
         path.write_text("placeholder\n", encoding="utf-8")
+
+
+def _write_launchguardian_config(tmp_path: Path, text: str) -> None:
+    (tmp_path / "launchguardian.yml").write_text(text.strip() + "\n", encoding="utf-8")
 
 
 def _read_report(tmp_path: Path) -> dict:

@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from ..config import LaunchGuardianConfig, is_excluded
 from ..models import Finding
 from .base import ScannerResult
 
@@ -40,6 +41,9 @@ PRIVATE_FILE_PATTERN = re.compile(r"(\.env|secret|private|token|password|client_
 class FrontendExposureScanner:
     name = "frontend_exposure"
 
+    def __init__(self, config: LaunchGuardianConfig | None = None) -> None:
+        self.config = config
+
     def scan(self, target: Path, report_dir: Path, *, strict_scanners: bool = False) -> ScannerResult:
         raw_dir = report_dir / "raw"
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -47,7 +51,7 @@ class FrontendExposureScanner:
 
         raw_results: list[dict] = []
         findings: list[Finding] = []
-        for path in _iter_frontend_files(target):
+        for path in _iter_frontend_files(target, self.config):
             relative_path = path.relative_to(target)
             if path.suffix.lower() == ".map":
                 raw_results.append(_raw_result("source_map", relative_path, None, "source map file"))
@@ -108,19 +112,21 @@ class FrontendExposureScanner:
         )
 
 
-def _iter_frontend_files(target: Path):
+def _iter_frontend_files(target: Path, config: LaunchGuardianConfig | None = None):
     for path in target.rglob("*"):
-        if not path.is_file() or _is_ignored(path, target):
+        if not path.is_file() or _is_ignored(path, target, config):
             continue
         if _is_likely_frontend_file(path, target):
             yield path
 
 
-def _is_ignored(path: Path, target: Path) -> bool:
+def _is_ignored(path: Path, target: Path, config: LaunchGuardianConfig | None = None) -> bool:
     relative_parts = path.relative_to(target).parts
     if any(part in IGNORED_DIRECTORIES for part in relative_parts):
         return True
-    return any(_has_part_sequence(relative_parts, ignored) for ignored in IGNORED_PARTS)
+    if any(_has_part_sequence(relative_parts, ignored) for ignored in IGNORED_PARTS):
+        return True
+    return bool(config and is_excluded(path, target, config))
 
 
 def _has_part_sequence(parts: tuple[str, ...], sequence: tuple[str, ...]) -> bool:

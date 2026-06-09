@@ -121,6 +121,56 @@ Use `--strict-scanners` when missing expected external scanners should block. In
 
 Secret values are not copied into normalized findings. LaunchGuardian runs Gitleaks with redaction enabled and avoids using raw `Secret` or `Match` values when creating normalized report entries.
 
+## Scanner Configuration
+
+Projects can add `launchguardian.yml` at the target root to control local scan behavior:
+
+```yaml
+scan:
+  output_dir: reports/launchguardian
+  include_tests: true
+  strict_scanners: false
+
+exclude:
+  paths:
+    - node_modules
+    - .git
+    - reports/launchguardian
+  globs:
+    - "**/*.min.js"
+    - "**/fixtures/**"
+
+scanners:
+  gitleaks:
+    enabled: true
+  semgrep:
+    enabled: true
+  trivy:
+    enabled: true
+  frontend_exposure:
+    enabled: true
+  api_surface:
+    enabled: true
+
+severity_policy:
+  critical_blocks: true
+  high_blocks: true
+  medium_blocks: false
+  low_blocks: false
+```
+
+Config precedence is:
+
+- CLI `--output-dir` overrides `scan.output_dir`.
+- CLI `--strict-scanners` overrides `scan.strict_scanners: false`.
+- If no `launchguardian.yml` exists, LaunchGuardian uses safe defaults and reports `config file found: false`.
+
+Scanners may be disabled in config, but disabled scanners are shown clearly in Markdown and JSON reports. A disabled external scanner such as Gitleaks, Semgrep, or Trivy is reported as `disabled`, not `unavailable`. In `--strict-scanners` mode, disabling an external scanner creates a blocking finding unless the scanner config includes both `allow_disabled_in_strict: true` and a non-empty `reason`.
+
+Native scanner exclusions apply to `frontend_exposure` and `api_surface`. Exclusions reduce coverage and should be reviewed carefully; they do not hide `launchguardian.yml` or required LGF files from config discovery.
+
+`severity_policy.critical_blocks: false` is not allowed silently. LaunchGuardian emits a blocking config finding because Critical findings are canonical launch blockers.
+
 ## Semgrep Scanning
 
 Install Semgrep before running static code scans:

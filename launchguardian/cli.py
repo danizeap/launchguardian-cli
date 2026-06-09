@@ -4,6 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from .config import (
+    EXTERNAL_SCANNERS,
+    SCANNER_GATES,
+    LaunchGuardianConfig,
+    load_launchguardian_config,
+)
 from .config_discovery import (
     discover_config,
     framework_mode_findings,
@@ -11,8 +17,8 @@ from .config_discovery import (
     validate_target,
 )
 from .launch_policy import validate_gate_applicability
-from .models import ValidationReport
-from .report_writer import DEFAULT_OUTPUT_DIR, write_normalized_findings, write_reports
+from .models import Finding, ValidationReport
+from .report_writer import write_normalized_findings, write_reports
 from .scanners.api_surface import ApiSurfaceScanner
 from .scanners.base import ScannerExecutionError
 from .scanners.frontend_exposure import FrontendExposureScanner
@@ -138,7 +144,9 @@ def scan_target(
 ) -> int:
     target_finding = validate_target(target)
     report_target = target.resolve()
-    report_dir = output_dir or report_target / DEFAULT_OUTPUT_DIR
+    scanner_config = load_launchguardian_config(report_target)
+    report_dir = _effective_report_dir(report_target, scanner_config, output_dir)
+    effective_strict_scanners = strict_scanners or scanner_config.strict_scanners
     validation_mode = _scan_validation_mode(
         framework_mode=framework_mode, skip_lgf_validation=skip_lgf_validation
     )
@@ -149,38 +157,48 @@ def scan_target(
             validation_mode=validation_mode,
             scan_mode="local",
             lgf_validation_skipped=skip_lgf_validation,
-            strict_scanners=strict_scanners,
-            findings=[target_finding],
+            strict_scanners=effective_strict_scanners,
+            findings=[target_finding, *scanner_config.config_findings],
             lgf_config_valid=False,
+            launchguardian_config=scanner_config.to_report_dict(report_dir),
         )
-        write_reports(report, output_dir)
+        write_reports(report, report_dir)
         write_normalized_findings(report.findings, report_dir)
         return EXIT_CONFIG_ERROR
 
     config = discover_config(target)
+    scanner_config = load_launchguardian_config(config.target)
+    report_dir = _effective_report_dir(config.target, scanner_config, output_dir)
+    effective_strict_scanners = strict_scanners or scanner_config.strict_scanners
     lgf_findings = _scan_lgf_findings(
         config,
         framework_mode=framework_mode,
         skip_lgf_validation=skip_lgf_validation,
     )
     scanner_findings, scanner_availability, scanner_counts, scanner_blocking_counts, scanner_failures = (
-        _run_scanners(config.target, report_dir, strict_scanners=strict_scanners)
+        _run_scanners(
+            config.target,
+            report_dir,
+            strict_scanners=effective_strict_scanners,
+            scanner_config=scanner_config,
+        )
     )
-    findings = [*lgf_findings, *scanner_findings]
+    findings = [*lgf_findings, *scanner_config.config_findings, *scanner_findings]
     report = ValidationReport(
         target=config.target,
         mode=validation_mode,
         validation_mode=validation_mode,
         scan_mode="local",
         lgf_validation_skipped=skip_lgf_validation,
-        strict_scanners=strict_scanners,
+        strict_scanners=effective_strict_scanners,
         findings=findings,
-        lgf_config_valid=not _has_blocking_open_findings(lgf_findings),
+        lgf_config_valid=not _has_blocking_open_findings([*lgf_findings, *scanner_config.config_findings]),
         scanner_availability=scanner_availability,
         scanner_counts=scanner_counts,
         scanner_blocking_counts=scanner_blocking_counts,
+        launchguardian_config=scanner_config.to_report_dict(report_dir),
     )
-    markdown_path, json_path = write_reports(report, output_dir)
+    markdown_path, json_path = write_reports(report, report_dir)
     normalized_path = write_normalized_findings(report.findings, report_dir)
 
     print(f"LaunchGuardian report written: {markdown_path}")
@@ -221,7 +239,13 @@ def _scan_validation_mode(*, framework_mode: bool, skip_lgf_validation: bool) ->
     return "project"
 
 
-def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
+def _run_scanners(
+    target: Path,
+    report_dir: Path,
+    *,
+    strict_scanners: bool,
+    scanner_config: LaunchGuardianConfig,
+):
     findings = []
     availability: dict[str, str] = {}
     counts: dict[str, int] = {}
@@ -231,9 +255,21 @@ def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
         GitleaksScanner(),
         SemgrepScanner(),
         TrivyScanner(),
-        FrontendExposureScanner(),
-        ApiSurfaceScanner(),
+        FrontendExposureScanner(scanner_config),
+        ApiSurfaceScanner(scanner_config),
     ):
+        if not scanner_config.scanner_enabled(scanner.name):
+            disabled_finding = _disabled_scanner_finding(
+                scanner.name,
+                strict_scanners=strict_scanners,
+                scanner_config=scanner_config,
+            )
+            findings.append(disabled_finding)
+            availability[scanner.name] = "disabled"
+            counts[scanner.name] = 0
+            blocking_counts[scanner.name] = 1 if disabled_finding.blocks_launch else 0
+            continue
+
         try:
             result = scanner.scan(target, report_dir, strict_scanners=strict_scanners)
         except ScannerExecutionError as exc:
@@ -252,6 +288,46 @@ def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
             if finding.blocks_launch and finding.status == "open"
         )
     return findings, availability, counts, blocking_counts, failures
+
+
+def _disabled_scanner_finding(
+    scanner_name: str, *, strict_scanners: bool, scanner_config: LaunchGuardianConfig
+):
+    is_external = scanner_name in EXTERNAL_SCANNERS
+    blocks_launch = (
+        strict_scanners
+        and is_external
+        and not scanner_config.scanner_allows_disabled_in_strict(scanner_name)
+    )
+    reason = scanner_config.scanner_reason(scanner_name)
+    scanner_label = scanner_name.replace("_", " ").title()
+    return Finding(
+        title=f"{scanner_label} scanner disabled by config",
+        severity="high" if blocks_launch else "info",
+        status="open",
+        category="scanner_disabled",
+        source="config",
+        description=(
+            f"{scanner_name} is disabled in launchguardian.yml."
+            + (f" Reason: {reason}" if reason else " No reason was provided.")
+        ),
+        risk="Disabled scanners reduce LaunchGuardian coverage and can leave launch risks unreviewed.",
+        recommendation=(
+            "Re-enable the scanner, or document a reason and explicit strict-mode allowance when the disablement is intentional."
+        ),
+        related_gate=SCANNER_GATES.get(scanner_name, "Gate 20 â€” Launch Decision"),
+        blocks_launch=blocks_launch,
+    )
+
+
+def _effective_report_dir(
+    target: Path, scanner_config: LaunchGuardianConfig, output_dir: Path | None
+) -> Path:
+    configured = scanner_config.output_dir
+    report_dir = output_dir or configured
+    if report_dir.is_absolute():
+        return report_dir
+    return target / report_dir
 
 
 def _has_blocking_open_findings(findings) -> bool:
