@@ -683,6 +683,203 @@ def test_scan_writes_raw_frontend_exposure_output(
     ).is_file()
 
 
+def test_api_route_without_auth_produces_medium_non_blocking_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "server" / "routes"
+    api_dir.mkdir(parents=True)
+    (api_dir / "public.ts").write_text(
+        'router.get("/api/profile", async (req, res) => {\n  return res.json({ ok: true });\n});\n',
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    findings = _api_findings(tmp_path)
+    assert any(
+        finding["title"] == "API route has no obvious auth guard"
+        and finding["severity"] == "medium"
+        and finding["blocks_launch"] is False
+        for finding in findings
+    )
+
+
+def test_api_admin_route_without_role_check_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "app" / "api" / "admin"
+    api_dir.mkdir(parents=True)
+    (api_dir / "route.ts").write_text(
+        "export async function POST(request) {\n"
+        "  const user = await requireAuth(request);\n"
+        "  return Response.json({ ok: true });\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _api_findings(tmp_path)
+    assert any(
+        finding["title"] == "Sensitive admin route lacks obvious role check"
+        and finding["severity"] == "high"
+        and finding["blocks_launch"] is True
+        and finding["related_gate"] == "Gate 6 — API Auth & Object Authorization"
+        for finding in findings
+    )
+
+
+def test_api_object_lookup_by_id_without_ownership_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "pages" / "api"
+    api_dir.mkdir(parents=True)
+    (api_dir / "item.ts").write_text(
+        "export async function GET(req) {\n"
+        "  const item = await db.item.findUnique({ where: { id: query.id } });\n"
+        "  return Response.json(item);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _api_findings(tmp_path)
+    assert any(
+        finding["title"] == "Object lookup by ID lacks obvious ownership filter"
+        and finding["severity"] == "high"
+        and finding["blocks_launch"] is True
+        for finding in findings
+    )
+
+
+def test_api_object_lookup_with_owner_check_does_not_produce_ownership_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "pages" / "api"
+    api_dir.mkdir(parents=True)
+    (api_dir / "item.ts").write_text(
+        "export async function GET(req) {\n"
+        "  const user = await requireAuth(req);\n"
+        "  const item = await db.item.findUnique({ where: { id: query.id, userId: user.id } });\n"
+        "  return Response.json(item);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    main(["scan", "--target", str(tmp_path)])
+
+    findings = _api_findings(tmp_path)
+    assert not any(
+        finding["title"] == "Object lookup by ID lacks obvious ownership filter"
+        for finding in findings
+    )
+
+
+def test_api_raw_sql_concatenation_blocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "backend" / "routes"
+    api_dir.mkdir(parents=True)
+    (api_dir / "search.py").write_text(
+        "@app.get('/api/search')\n"
+        "def search():\n"
+        "    user = requireAuth()\n"
+        "    sql = 'SELECT * FROM users WHERE id = ' + request.args.get('id')\n"
+        "    return db.execute(sql)\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    findings = _api_findings(tmp_path)
+    assert any(
+        finding["title"] == "Raw SQL string construction detected"
+        and finding["severity"] == "high"
+        and finding["blocks_launch"] is True
+        and finding["related_gate"] == "Gate 7 — Injection & Input Safety"
+        for finding in findings
+    )
+
+
+def test_api_state_changing_cookie_route_missing_csrf_is_non_blocking(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    api_dir = tmp_path / "routes"
+    api_dir.mkdir()
+    (api_dir / "session.js").write_text(
+        "router.post('/api/session', (req, res) => {\n"
+        "  const session = req.cookies.session;\n"
+        "  return res.json({ ok: true });\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    findings = _api_findings(tmp_path)
+    assert any(
+        finding["title"] == "State-changing session route lacks obvious CSRF signal"
+        and finding["severity"] == "medium"
+        and finding["blocks_launch"] is False
+        and finding["related_gate"] == "Gate 8 — Auth, Sessions & CSRF"
+        for finding in findings
+    )
+
+
+def test_api_ignored_directories_are_not_scanned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+    ignored_dir = tmp_path / "dist" / "api"
+    ignored_dir.mkdir(parents=True)
+    (ignored_dir / "admin.ts").write_text(
+        "export async function POST(request) { return Response.json({ ok: true }); }\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert _api_findings(tmp_path) == []
+
+
+def test_scan_writes_raw_api_surface_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    assert (
+        tmp_path
+        / "reports"
+        / "launchguardian"
+        / "raw"
+        / "api-surface-results.json"
+    ).is_file()
+
+
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:
     security_dir = tmp_path / "sdd-plus" / "security"
     security_dir.mkdir(parents=True)
@@ -722,6 +919,14 @@ def _frontend_findings(tmp_path: Path) -> list[dict]:
         finding
         for finding in _read_report(tmp_path)["findings"]
         if finding["source"] == "frontend_exposure"
+    ]
+
+
+def _api_findings(tmp_path: Path) -> list[dict]:
+    return [
+        finding
+        for finding in _read_report(tmp_path)["findings"]
+        if finding["source"] == "api_surface"
     ]
 
 

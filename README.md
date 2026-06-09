@@ -31,7 +31,7 @@ reports/launchguardian/
 
 ## Current Scope
 
-LaunchGuardian currently supports local Gitleaks secret scanning, local Semgrep static code security scanning, local Trivy dependency/filesystem/container/IaC scanning, and a native frontend exposure scanner. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
+LaunchGuardian currently supports local Gitleaks secret scanning, local Semgrep static code security scanning, local Trivy dependency/filesystem/container/IaC scanning, a native frontend exposure scanner, and a native API surface scanner. It does not perform active web scanning, exploit testing, credential guessing, or any offensive workflow.
 
 ## Exit Codes
 
@@ -71,7 +71,8 @@ Reports are generated under the target project by default:
     |-- gitleaks-results.json
     |-- semgrep-results.json
     |-- trivy-results.json
-    `-- frontend-exposure-results.json
+    |-- frontend-exposure-results.json
+    `-- api-surface-results.json
 ```
 
 The JSON report includes schema metadata, `validation_mode`, `scan_mode`, `lgf_validation_skipped`, `strict_scanners`, LGF config validation result, scanner availability, scanner finding counts, launch status, blocked status, target path, and normalized findings. The Markdown report is the human-readable summary.
@@ -94,17 +95,19 @@ launchguardian scan --target . --skip-lgf-validation
 launchguardian scan --target . --strict-scanners
 ```
 
-LaunchGuardian runs its native frontend exposure scanner without external dependencies. If Gitleaks, Semgrep, and Trivy are installed, LaunchGuardian also runs those scanner integrations:
+LaunchGuardian runs its native frontend exposure and API surface scanners without external dependencies. If Gitleaks, Semgrep, and Trivy are installed, LaunchGuardian also runs those scanner integrations:
 
 - LGF validation.
 - Local Gitleaks secret scanning against the target path.
 - Local Semgrep static code security scanning against the target path.
 - Local Trivy dependency, filesystem, container, and IaC scanning against the target path.
 - Native frontend exposure checks against likely frontend source and build output files.
+- Native API route, auth, object authorization, injection, CSRF/session, and business-logic heuristic checks.
 - Raw Gitleaks JSON output to `reports/launchguardian/raw/gitleaks-results.json`.
 - Raw Semgrep JSON output to `reports/launchguardian/raw/semgrep-results.json`.
 - Raw Trivy JSON output to `reports/launchguardian/raw/trivy-results.json`.
 - Raw frontend exposure JSON output to `reports/launchguardian/raw/frontend-exposure-results.json`.
+- Raw API surface JSON output to `reports/launchguardian/raw/api-surface-results.json`.
 - Normalized findings to `reports/launchguardian/normalized-findings.json`.
 - Markdown and JSON launch reports.
 
@@ -164,14 +167,30 @@ The scanner checks for:
 
 Public frontend prefixes such as `NEXT_PUBLIC_`, `VITE_`, and `REACT_APP_` are intentionally exposed to browser code by their frameworks. They must never contain secrets, tokens, private keys, passwords, or client secrets. LaunchGuardian reports only the variable name, file path, line number, and safe explanation; it does not copy raw secret values into normalized findings.
 
+## API Surface Scanning
+
+LaunchGuardian includes a native API surface scanner that does not require external tools. It recursively inspects likely backend and API files such as `.py`, `.js`, `.jsx`, `.ts`, `.tsx`, `.go`, `.java`, `.cs`, `.rb`, `.php`, and route files under `api/`, `app/api/`, `pages/api/`, `routes/`, `controllers/`, `server/`, `backend/`, `functions/`, `supabase/functions/`, `netlify/functions/`, and detectable Vercel function paths.
+
+The scanner checks for heuristic launch-review signals:
+
+- API routes with no nearby recognizable auth guard.
+- Admin, billing, payment, invite, role, permission, or organization-management routes with no nearby role/admin check.
+- Object lookups by user-controlled IDs without nearby ownership, user, org, tenant, account, or team filters.
+- Raw SQL string construction near SQL keywords.
+- State-changing cookie/session routes with no nearby CSRF or SameSite signal.
+- Business-sensitive endpoints without an explicit nearby policy or guard comment.
+
+API surface findings are static heuristics. They are not proof of a vulnerability, and they are not proof of safety when absent. Treat them as launch-review signals that should be confirmed by a human reviewer against the actual framework, middleware, and authorization architecture.
+
 ## Current Limitations
 
-- Only the Gitleaks, Semgrep, Trivy, and frontend exposure scanners are implemented.
+- Only the Gitleaks, Semgrep, Trivy, frontend exposure, and API surface scanners are implemented.
 - No active web scanning is implemented.
 - No offensive tooling is included.
 - Semgrep findings are static analysis signals and may require review.
 - Trivy findings may require review, and dependency updates may need compatibility testing.
 - Frontend exposure findings may require review to distinguish intentional development-only references from production exposure.
+- API surface findings are heuristic review signals, not proof of vulnerability.
 - `validate-lgf` only validates required LGF files and high-risk skipped gate confirmation.
 - `validate-lgf --framework-mode` validates template presence only; it is not a project launch decision.
 - `scan --framework-mode` scans framework, template, or tool repos without requiring project-specific LGF files.

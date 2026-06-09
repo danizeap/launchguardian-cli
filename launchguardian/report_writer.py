@@ -46,10 +46,12 @@ def _render_markdown(report: ValidationReport) -> str:
     semgrep_count = scanner_counts.get("semgrep", 0)
     trivy_count = scanner_counts.get("trivy", 0)
     frontend_exposure_count = scanner_counts.get("frontend_exposure", 0)
+    api_surface_count = scanner_counts.get("api_surface", 0)
     gitleaks_blocking_count = scanner_blocking_counts.get("gitleaks", 0)
     semgrep_blocking_count = scanner_blocking_counts.get("semgrep", 0)
     trivy_blocking_count = scanner_blocking_counts.get("trivy", 0)
     frontend_exposure_blocking_count = scanner_blocking_counts.get("frontend_exposure", 0)
+    api_surface_blocking_count = scanner_blocking_counts.get("api_surface", 0)
     blocking_findings = [
         finding for finding in report.findings if finding.blocks_launch and finding.status == "open"
     ]
@@ -75,6 +77,8 @@ def _render_markdown(report: ValidationReport) -> str:
         f"- Trivy blocking findings: **{trivy_blocking_count}**",
         f"- Frontend Exposure findings: **{frontend_exposure_count}**",
         f"- Frontend Exposure blocking findings: **{frontend_exposure_blocking_count}**",
+        f"- API Surface findings: **{api_surface_count}**",
+        f"- API Surface blocking findings: **{api_surface_blocking_count}**",
         f"- Total normalized scanner findings: **{scanner_finding_count}**",
         f"- Blocking findings: **{len(blocking_findings)}**",
         "",

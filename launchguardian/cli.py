@@ -13,6 +13,7 @@ from .config_discovery import (
 from .launch_policy import validate_gate_applicability
 from .models import ValidationReport
 from .report_writer import DEFAULT_OUTPUT_DIR, write_normalized_findings, write_reports
+from .scanners.api_surface import ApiSurfaceScanner
 from .scanners.base import ScannerExecutionError
 from .scanners.frontend_exposure import FrontendExposureScanner
 from .scanners.gitleaks import GitleaksScanner
@@ -231,6 +232,7 @@ def _run_scanners(target: Path, report_dir: Path, *, strict_scanners: bool):
         SemgrepScanner(),
         TrivyScanner(),
         FrontendExposureScanner(),
+        ApiSurfaceScanner(),
     ):
         try:
             result = scanner.scan(target, report_dir, strict_scanners=strict_scanners)

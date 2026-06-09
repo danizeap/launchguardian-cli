@@ -25,6 +25,7 @@ class Finding:
     file_path: str = ""
     line: int | None = None
     endpoint: str = ""
+    endpoint_or_route: str = ""
     package_name: str = ""
     installed_version: str = ""
     fixed_version: str = ""
@@ -40,6 +41,7 @@ class Finding:
             "file_path": self.file_path,
             "line": self.line,
             "endpoint": self.endpoint,
+            "endpoint_or_route": self.endpoint_or_route,
             "package_name": self.package_name,
             "installed_version": self.installed_version,
             "fixed_version": self.fixed_version,
