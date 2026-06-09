@@ -102,6 +102,27 @@ def test_release_docs_exist() -> None:
     assert (root / "docs" / "mvp.md").is_file()
 
 
+def test_sample_demo_reports_exist_are_sanitized_and_blocked() -> None:
+    root = Path(__file__).resolve().parents[1]
+    sample_dir = root / "examples" / "reports" / "demo-vulnerable-app"
+    markdown_path = sample_dir / "launchguardian-report.md"
+    json_path = sample_dir / "launchguardian-report.json"
+    normalized_path = sample_dir / "normalized-findings.json"
+
+    assert markdown_path.is_file()
+    assert json_path.is_file()
+    assert normalized_path.is_file()
+
+    combined_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (markdown_path, json_path, normalized_path)
+    )
+    assert "C:\\Users\\Daniel Paez" not in combined_text
+
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+    assert report["launch_status"] == "BLOCKED"
+
+
 def test_markdown_report_includes_summary_scanner_summary_and_top_blockers(
     tmp_path: Path, monkeypatch
 ) -> None:

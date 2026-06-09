@@ -122,6 +122,10 @@ Use **Scanner Summary** to see which scanners ran, were unavailable, failed, or 
 
 Each finding row includes what was detected, whether it blocks launch, where it was found, why it matters, and what to review or fix. The JSON report also includes `counts_by_severity`, `counts_by_scanner`, `counts_by_gate`, and `blocking_findings` for automation.
 
+## Sample Reports
+
+Sample MVP reports generated from the intentionally vulnerable demo app are available under [examples/reports/demo-vulnerable-app](examples/reports/demo-vulnerable-app/). They show a `BLOCKED` scan with expected `frontend_exposure` and `api_surface` findings, without requiring users to run the scanner first.
+
 ## CI Usage
 
 LaunchGuardian can run in GitHub Actions before the package is published. Workflow templates live under `templates/github-actions/`:
