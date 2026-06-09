@@ -971,7 +971,10 @@ def test_scan_no_config_file_uses_defaults(tmp_path: Path, monkeypatch) -> None:
     assert exit_code == EXIT_VALID
     report = _read_report(tmp_path)
     assert report["launchguardian_config"]["found"] is False
-    assert report["launchguardian_config"]["configured_output_dir"] == "reports\\launchguardian"
+    assert (
+        report["launchguardian_config"]["configured_output_dir"].replace("\\", "/")
+        == "reports/launchguardian"
+    )
     assert report["launchguardian_config"]["exclude"]["paths"] == [
         "node_modules",
         ".git",
