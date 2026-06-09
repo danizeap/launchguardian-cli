@@ -4,7 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config_discovery import discover_config, missing_file_findings, validate_target
+from .config_discovery import (
+    discover_config,
+    framework_mode_findings,
+    missing_file_findings,
+    validate_target,
+)
 from .launch_policy import validate_gate_applicability
 from .models import ValidationReport
 from .report_writer import write_reports
@@ -27,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Report output directory. Defaults to <target>/reports/launchguardian.",
     )
+    validate.add_argument(
+        "--framework-mode",
+        action="store_true",
+        help="Validate LaunchGuardian framework/templates instead of project-specific LGF records.",
+    )
     return parser
 
 
@@ -35,25 +45,36 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "validate-lgf":
-        return validate_lgf(Path(args.target), Path(args.output_dir) if args.output_dir else None)
+        return validate_lgf(
+            Path(args.target),
+            Path(args.output_dir) if args.output_dir else None,
+            framework_mode=args.framework_mode,
+        )
 
     parser.error(f"Unsupported command: {args.command}")
     return EXIT_CONFIG_ERROR
 
 
-def validate_lgf(target: Path, output_dir: Path | None = None) -> int:
+def validate_lgf(
+    target: Path, output_dir: Path | None = None, *, framework_mode: bool = False
+) -> int:
     target_finding = validate_target(target)
     if target_finding is not None:
-        report = ValidationReport(target=target.resolve(), findings=[target_finding])
+        report = ValidationReport(
+            target=target.resolve(), mode="framework" if framework_mode else "project", findings=[target_finding]
+        )
         write_reports(report, output_dir)
         return EXIT_CONFIG_ERROR
 
     config = discover_config(target)
     findings = []
-    findings.extend(missing_file_findings(config))
-    findings.extend(validate_gate_applicability(config.gate_applicability))
+    if framework_mode:
+        findings.extend(framework_mode_findings(config))
+    else:
+        findings.extend(missing_file_findings(config))
+        findings.extend(validate_gate_applicability(config.gate_applicability))
 
-    report = ValidationReport(target=config.target, findings=findings)
+    report = ValidationReport(target=config.target, mode="framework" if framework_mode else "project", findings=findings)
     markdown_path, json_path = write_reports(report, output_dir)
 
     print(f"LaunchGuardian report written: {markdown_path}")

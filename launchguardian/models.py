@@ -51,11 +51,14 @@ class DiscoveredConfig:
     scope_contract: Path | None
     launch_decision: Path | None
     missing_files: tuple[str, ...] = ()
+    framework_files: tuple[Path, ...] = ()
+    missing_framework_files: tuple[str, ...] = ()
 
 
 @dataclass
 class ValidationReport:
     target: Path
+    mode: str = "project"
     findings: list[Finding] = field(default_factory=list)
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -72,6 +75,7 @@ class ValidationReport:
             "generated_at": self.generated_at,
             "launchguardian_version": "0.1.0",
             "target": str(self.target),
+            "mode": self.mode,
             "blocked": self.blocked,
             "findings": [finding.to_dict() for finding in self.findings],
         }

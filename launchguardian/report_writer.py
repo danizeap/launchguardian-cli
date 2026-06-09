@@ -27,6 +27,7 @@ def _render_markdown(report: ValidationReport) -> str:
         "# LaunchGuardian Report",
         "",
         f"- Target: `{report.target}`",
+        f"- Mode: `{report.mode}`",
         f"- Generated at: `{report.generated_at}`",
         f"- Status: **{status}**",
         "",
