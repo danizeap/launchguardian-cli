@@ -84,6 +84,49 @@ def test_report_generation(tmp_path: Path) -> None:
     assert (report_dir / "launchguardian-report.json").is_file()
 
 
+def test_markdown_report_includes_summary_scanner_summary_and_top_blockers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    (tmp_path / "app.js").write_text('localStorage.setItem("token", token);\n', encoding="utf-8")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    markdown = (tmp_path / "reports" / "launchguardian" / "launchguardian-report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Launch Decision" in markdown
+    assert "## Executive Summary" in markdown
+    assert "## Scanner Summary" in markdown
+    assert "## Top Blockers" in markdown
+    assert "## Recommended Next Actions" in markdown
+    assert "## Findings By Severity" in markdown
+    assert "## Findings By Gate" in markdown
+    assert "Sensitive-looking browser storage usage" in markdown
+
+
+def test_json_report_includes_counts_and_blocking_findings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    (tmp_path / "app.js").write_text('localStorage.setItem("token", token);\n', encoding="utf-8")
+    _mock_scanners(monkeypatch, gitleaks_findings=[], semgrep_findings=[], trivy_results=[])
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert report["counts_by_severity"]["high"] >= 1
+    assert report["counts_by_scanner"]["frontend_exposure"] >= 1
+    assert any("Gate 8" in gate for gate in report["counts_by_gate"])
+    assert report["blocking_findings"]
+    assert report["blocking_findings"][0]["blocks_launch"] is True
+    assert report["generated_at"]
+    assert str(tmp_path) in report["target"]
+
+
 def test_validating_real_project_with_required_lgf_files(tmp_path: Path) -> None:
     _write_required_files(
         tmp_path,

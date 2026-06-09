@@ -84,6 +84,14 @@ launchguardian validate-lgf --target . --output-dir reports/launchguardian
 launchguardian scan --target . --output-dir reports/launchguardian
 ```
 
+## Reading The Report
+
+Start with **Launch Decision** and **Executive Summary**. If the report says `BLOCKED`, review **Top Blockers** first; those findings must be fixed, removed from launch scope, or handled through an explicit approved exception before launch.
+
+Use **Scanner Summary** to see which scanners ran, were unavailable, failed, or were disabled by config. Use **Findings By Severity** for remediation priority and **Findings By Gate** to map work back to the LaunchGuardian Framework gates.
+
+Each finding row includes what was detected, whether it blocks launch, where it was found, why it matters, and what to review or fix. The JSON report also includes `counts_by_severity`, `counts_by_scanner`, `counts_by_gate`, and `blocking_findings` for automation.
+
 ## CI Usage
 
 LaunchGuardian can run in GitHub Actions before the package is published. Workflow templates live under `templates/github-actions/`:

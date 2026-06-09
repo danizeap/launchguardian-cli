@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .models import Finding, ValidationReport
 
 
 DEFAULT_OUTPUT_DIR = Path("reports") / "launchguardian"
+SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 
 
 def write_reports(report: ValidationReport, output_dir: Path | None = None) -> tuple[Path, Path]:
@@ -47,31 +49,119 @@ def _render_markdown(report: ValidationReport) -> str:
     disabled_scanners = lg_config.get("disabled_scanners", {})
     severity_policy = lg_config.get("severity_policy", {})
     config_findings = [finding for finding in report.findings if finding.source == "config"]
-    gitleaks_count = scanner_counts.get("gitleaks", 0)
-    semgrep_count = scanner_counts.get("semgrep", 0)
-    trivy_count = scanner_counts.get("trivy", 0)
-    frontend_exposure_count = scanner_counts.get("frontend_exposure", 0)
-    api_surface_count = scanner_counts.get("api_surface", 0)
-    gitleaks_blocking_count = scanner_blocking_counts.get("gitleaks", 0)
-    semgrep_blocking_count = scanner_blocking_counts.get("semgrep", 0)
-    trivy_blocking_count = scanner_blocking_counts.get("trivy", 0)
-    frontend_exposure_blocking_count = scanner_blocking_counts.get("frontend_exposure", 0)
-    api_surface_blocking_count = scanner_blocking_counts.get("api_surface", 0)
-    blocking_findings = [
-        finding for finding in report.findings if finding.blocks_launch and finding.status == "open"
-    ]
+    blocking_findings = report.blocking_findings
     scanner_finding_count = sum(scanner_counts.values())
     lines = [
         "# LaunchGuardian Report",
+        "",
+        "## Launch Decision",
+        "",
+        f"**{report.launch_status}**",
+        "",
+        _decision_sentence(report, scanner_finding_count, len(blocking_findings)),
+        "",
+        "## Executive Summary",
         "",
         f"- Target: `{report.target}`",
         f"- Mode: `{report.mode}`",
         f"- Validation mode: `{report.validation_mode}`",
         f"- Scan mode: `{report.scan_mode}`",
         f"- Generated at: `{report.generated_at}`",
-        f"- Launch status: **{report.launch_status}**",
         f"- LGF validation status: **{report.lgf_validation_status}**",
         f"- Strict scanners: **{str(report.strict_scanners).lower()}**",
+        f"- Total findings: **{len(report.findings)}**",
+        f"- Scanner findings: **{scanner_finding_count}**",
+        f"- Blocking findings: **{len(blocking_findings)}**",
+        f"- Severity counts: {_inline_counts(report.counts_by_severity)}",
+        "",
+        "## Scanner Summary",
+        "",
+        "| Scanner | Status | Findings | Blocking Findings |",
+        "| --- | --- | ---: | ---: |",
+    ]
+    for scanner_name in sorted(scanner_availability):
+        lines.append(
+            "| {scanner} | {status} | {count} | {blocking} |".format(
+                scanner=_escape_table(scanner_name),
+                status=_escape_table(scanner_availability.get(scanner_name, "not_run")),
+                count=scanner_counts.get(scanner_name, 0),
+                blocking=scanner_blocking_counts.get(scanner_name, 0),
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Top Blockers",
+            "",
+        ]
+    )
+    if blocking_findings:
+        lines.extend(_render_finding_table(blocking_findings[:10], include_gate=True, include_location=True))
+        if len(blocking_findings) > 10:
+            lines.append(f"Additional blocking findings: **{len(blocking_findings) - 10}**")
+    else:
+        lines.append("No open blocking findings.")
+
+    lines.extend(
+        [
+            "",
+            "## Recommended Next Actions",
+            "",
+        ]
+    )
+    lines.extend(_recommended_actions(report))
+
+    lines.extend(
+        [
+            "",
+            "## Findings By Severity",
+            "",
+        ]
+    )
+    for severity in SEVERITY_ORDER:
+        findings = [finding for finding in report.findings if finding.severity == severity]
+        if not findings:
+            continue
+        lines.extend(
+            [
+                f"### {severity.title()} ({len(findings)})",
+                "",
+                *_render_finding_table(findings, include_gate=True, include_location=True),
+                "",
+            ]
+        )
+    if not report.findings:
+        lines.append("No findings.")
+
+    lines.extend(
+        [
+            "",
+            "## Findings By Gate",
+            "",
+        ]
+    )
+    for gate, findings in _findings_by_gate(report.findings).items():
+        lines.extend(
+            [
+                f"### {gate} ({len(findings)})",
+                "",
+                *_render_finding_table(findings, include_gate=False, include_location=True),
+                "",
+            ]
+        )
+    if not report.findings:
+        lines.append("No findings.")
+
+    lines.extend(
+        [
+            "",
+            "## Configuration",
+            "",
+        ]
+    )
+    lines.extend(
+        [
         f"- Config file found: **{str(bool(lg_config.get('found'))).lower()}**",
         f"- Config file: `{lg_config.get('path', '') or 'not found'}`",
         f"- Configured output dir: `{lg_config.get('configured_output_dir', '') or 'reports/launchguardian'}`",
@@ -95,46 +185,121 @@ def _render_markdown(report: ValidationReport) -> str:
             else "`default`"
         ),
         f"- Config warnings/blockers: **{len(config_findings)}**",
-        "- Scanner availability: "
-        + ", ".join(f"`{name}: {status}`" for name, status in scanner_availability.items()),
-        f"- Gitleaks findings: **{gitleaks_count}**",
-        f"- Gitleaks blocking findings: **{gitleaks_blocking_count}**",
-        f"- Semgrep findings: **{semgrep_count}**",
-        f"- Semgrep blocking findings: **{semgrep_blocking_count}**",
-        f"- Trivy findings: **{trivy_count}**",
-        f"- Trivy blocking findings: **{trivy_blocking_count}**",
-        f"- Frontend Exposure findings: **{frontend_exposure_count}**",
-        f"- Frontend Exposure blocking findings: **{frontend_exposure_blocking_count}**",
-        f"- API Surface findings: **{api_surface_count}**",
-        f"- API Surface blocking findings: **{api_surface_blocking_count}**",
-        f"- Total normalized scanner findings: **{scanner_finding_count}**",
-        f"- Blocking findings: **{len(blocking_findings)}**",
+        ]
+    )
+
+    lines.extend(
+        [
         "",
-        "## Findings",
+        "## All Findings",
         "",
-    ]
+    ])
     if not report.findings:
         lines.append("No findings.")
     else:
-        lines.extend(
-            [
-                "| Severity | Blocks Launch | Related Gate | Title | Recommendation |",
-                "| --- | --- | --- | --- | --- |",
-            ]
-        )
-        for finding in report.findings:
-            lines.append(
-                "| {severity} | {blocks} | {gate} | {title} | {recommendation} |".format(
-                    severity=finding.severity,
-                    blocks="yes" if finding.blocks_launch else "no",
-                    gate=_escape_table(finding.related_gate),
-                    title=_escape_table(finding.title),
-                    recommendation=_escape_table(finding.recommendation),
-                )
-            )
+        lines.extend(_render_finding_table(report.findings, include_gate=True, include_location=True))
     lines.append("")
     return "\n".join(lines)
 
 
 def _escape_table(value: str) -> str:
     return str(value).replace("|", "\\|")
+
+
+def _decision_sentence(report: ValidationReport, scanner_finding_count: int, blocking_count: int) -> str:
+    if report.launch_status == "BLOCKED":
+        return (
+            f"Launch is blocked by **{blocking_count}** open blocking finding(s). "
+            "Fix the issue, remove the affected feature from scope, or document an approved exceptional override before launch."
+        )
+    if report.launch_status == "INCOMPLETE":
+        return (
+            "LaunchGuardian could not produce a complete approval because required validation or scanner coverage is incomplete."
+        )
+    if report.launch_status == "SCANNED_WITHOUT_LGF":
+        return (
+            f"Scan completed with **{scanner_finding_count}** scanner finding(s), but LGF validation was skipped."
+        )
+    return "No open blocking findings were found by the enabled local checks."
+
+
+def _inline_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"**{name}**: {counts.get(name, 0)}" for name in SEVERITY_ORDER)
+
+
+def _render_finding_table(
+    findings: list[Finding], *, include_gate: bool, include_location: bool
+) -> list[str]:
+    headers = ["Severity", "Blocks", "Source"]
+    if include_gate:
+        headers.append("Gate")
+    if include_location:
+        headers.append("Location")
+    headers.extend(["Finding", "Why It Matters", "Review Or Fix"])
+
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for finding in findings:
+        row = [
+            finding.severity,
+            "yes" if finding.blocks_launch else "no",
+            finding.source,
+        ]
+        if include_gate:
+            row.append(finding.related_gate or "Unmapped")
+        if include_location:
+            row.append(_finding_location(finding))
+        row.extend([finding.title, finding.risk, finding.recommendation])
+        lines.append("| " + " | ".join(_escape_table(value) for value in row) + " |")
+    return lines
+
+
+def _finding_location(finding: Finding) -> str:
+    location = finding.file_path or finding.endpoint_or_route or finding.endpoint or ""
+    if finding.line is not None and location:
+        return f"{location}:{finding.line}"
+    if location:
+        return location
+    return "n/a"
+
+
+def _findings_by_gate(findings: list[Finding]) -> dict[str, list[Finding]]:
+    grouped: dict[str, list[Finding]] = {}
+    for finding in findings:
+        gate = finding.related_gate or "Unmapped"
+        grouped.setdefault(gate, []).append(finding)
+    return dict(sorted(grouped.items(), key=lambda item: _gate_sort_key(item[0])))
+
+
+def _recommended_actions(report: ValidationReport) -> list[str]:
+    actions: list[str] = []
+    if report.blocking_findings:
+        actions.append(
+            f"Resolve or explicitly remove from launch scope the **{len(report.blocking_findings)}** open blocking finding(s)."
+        )
+    unavailable = [
+        name
+        for name, status in report.scanner_availability.items()
+        if status in {"unavailable", "failed", "execution_failed"}
+    ]
+    if unavailable:
+        actions.append(
+            "Restore scanner coverage for: " + ", ".join(f"`{name}`" for name in unavailable) + "."
+        )
+    if report.lgf_validation_skipped:
+        actions.append("Run again without `--skip-lgf-validation` before making a launch decision.")
+    if report.launch_status == "INCOMPLETE":
+        actions.append("Complete missing scanner or LGF coverage before treating this as approved.")
+    if not actions:
+        actions.append("Review non-blocking findings and decide whether to fix, accept, or monitor them.")
+    actions.append("Re-run `launchguardian scan --target .` after remediation and attach the updated report.")
+    return [f"{index}. {action}" for index, action in enumerate(actions, start=1)]
+
+
+def _gate_sort_key(gate: str) -> tuple[int, str]:
+    match = re.search(r"Gate\s+(\d+)", gate)
+    if match:
+        return int(match.group(1)), gate
+    return 999, gate

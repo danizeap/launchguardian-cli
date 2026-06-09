@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 FindingStatus = Literal["open", "fixed", "accepted", "false_positive", "needs_review"]
+SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,36 @@ class ValidationReport:
             return "skipped"
         return "valid" if self.lgf_config_valid else "blocked"
 
+    @property
+    def counts_by_severity(self) -> dict[str, int]:
+        counts = {severity: 0 for severity in SEVERITY_ORDER}
+        for finding in self.findings:
+            counts[finding.severity] = counts.get(finding.severity, 0) + 1
+        return counts
+
+    @property
+    def counts_by_scanner(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for finding in self.findings:
+            counts[finding.source] = counts.get(finding.source, 0) + 1
+        return counts
+
+    @property
+    def counts_by_gate(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for finding in self.findings:
+            gate = finding.related_gate or "Unmapped"
+            counts[gate] = counts.get(gate, 0) + 1
+        return counts
+
+    @property
+    def blocking_findings(self) -> list[Finding]:
+        return [
+            finding
+            for finding in self.findings
+            if finding.blocks_launch and finding.status == "open"
+        ]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_name": "launchguardian.report",
@@ -129,6 +160,10 @@ class ValidationReport:
             "scanner_availability": self.scanner_availability,
             "scanner_counts": self.scanner_counts,
             "scanner_blocking_counts": self.scanner_blocking_counts,
+            "counts_by_severity": self.counts_by_severity,
+            "counts_by_scanner": self.counts_by_scanner,
+            "counts_by_gate": self.counts_by_gate,
+            "blocking_findings": [finding.to_dict() for finding in self.blocking_findings],
             "launchguardian_config": self.launchguardian_config,
             "blocked": self.blocked,
             "findings": [finding.to_dict() for finding in self.findings],
