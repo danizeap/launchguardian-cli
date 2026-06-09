@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from launchguardian.cli import EXIT_BLOCKED, EXIT_VALID, main
 
 
@@ -82,6 +84,22 @@ def test_report_generation(tmp_path: Path) -> None:
     report_dir = tmp_path / "reports" / "launchguardian"
     assert (report_dir / "launchguardian-report.md").is_file()
     assert (report_dir / "launchguardian-report.json").is_file()
+
+
+def test_version_command_returns_current_version(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.strip() == "0.1.0"
+
+
+def test_release_docs_exist() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    assert (root / "CHANGELOG.md").is_file()
+    assert (root / "RELEASE_CHECKLIST.md").is_file()
+    assert (root / "docs" / "mvp.md").is_file()
 
 
 def test_markdown_report_includes_summary_scanner_summary_and_top_blockers(

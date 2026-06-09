@@ -1,10 +1,40 @@
 # LaunchGuardian CLI
 
+Current version: **v0.1.0 MVP**
+
 LaunchGuardian CLI is the implementation companion to the LaunchGuardian Framework (LGF). It validates LGF project files and runs local, permission-bound security checks against target paths provided by the user.
+
+## Quickstart
+
+For a first local smoke scan against a framework, template, or tool repository:
+
+```bash
+python -m launchguardian.cli scan --target . --framework-mode
+```
+
+For a project with LGF files:
+
+```bash
+python -m launchguardian.cli scan --target .
+```
+
+For CI release gates:
+
+```bash
+python -m launchguardian.cli scan --target . --strict-scanners
+```
+
+More release and usage docs:
+
+- [MVP scope](docs/mvp.md)
+- [CI usage](docs/ci.md)
+- [Changelog](CHANGELOG.md)
+- [Release checklist](RELEASE_CHECKLIST.md)
 
 Implemented commands:
 
 ```bash
+launchguardian --version
 launchguardian validate-lgf --target .
 launchguardian validate-lgf --target . --framework-mode
 launchguardian scan --target .

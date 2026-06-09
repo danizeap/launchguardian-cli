@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .config import (
     EXTERNAL_SCANNERS,
     SCANNER_GATES,
@@ -35,6 +36,12 @@ EXIT_CONFIG_ERROR = 3
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="launchguardian")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=__version__,
+        help="Show LaunchGuardian version and exit.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate = subparsers.add_parser("validate-lgf", help="Validate LGF project files.")
