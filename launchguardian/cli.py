@@ -322,7 +322,7 @@ def _disabled_scanner_finding(
         recommendation=(
             "Re-enable the scanner, or document a reason and explicit strict-mode allowance when the disablement is intentional."
         ),
-        related_gate=SCANNER_GATES.get(scanner_name, "Gate 20 â€” Launch Decision"),
+        related_gate=SCANNER_GATES.get(scanner_name, "Gate 20 — Launch Decision"),
         blocks_launch=blocks_launch,
     )
 

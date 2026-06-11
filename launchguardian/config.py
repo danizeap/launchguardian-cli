@@ -27,11 +27,11 @@ DEFAULT_SEVERITY_POLICY = {
 }
 EXTERNAL_SCANNERS = {"gitleaks", "semgrep", "trivy"}
 SCANNER_GATES = {
-    "gitleaks": "Gate 4 â€” Secrets & Config Hygiene",
-    "semgrep": "Gate 3 â€” Code Security",
-    "trivy": "Gate 10 â€” Dependency, SBOM & Supply Chain",
-    "frontend_exposure": "Gate 5 â€” Frontend Exposure",
-    "api_surface": "Gate 6 â€” API Auth & Object Authorization",
+    "gitleaks": "Gate 4 — Secrets & Config Hygiene",
+    "semgrep": "Gate 3 — Code Security",
+    "trivy": "Gate 10 — Dependency, SBOM & Supply Chain",
+    "frontend_exposure": "Gate 5 — Frontend Exposure",
+    "api_surface": "Gate 6 — API Auth & Object Authorization",
 }
 
 
@@ -112,7 +112,7 @@ def load_launchguardian_config(target: Path) -> LaunchGuardianConfig:
             description=f"Could not parse launchguardian.yml: {exc}",
             risk="Invalid scanner configuration prevents reliable local scan behavior.",
             recommendation="Fix YAML syntax in launchguardian.yml and rerun LaunchGuardian.",
-            related_gate="Gate 20 â€” Launch Decision",
+            related_gate="Gate 20 — Launch Decision",
             blocks_launch=True,
         )
         return _default_config(resolved_target, path=config_path, findings=(finding,))
@@ -209,7 +209,7 @@ def _config_policy_findings(config: LaunchGuardianConfig) -> list[Finding]:
                 description="launchguardian.yml sets severity_policy.critical_blocks: false.",
                 risk="Critical findings are canonical LaunchGuardian launch blockers and cannot be silently downgraded by local configuration.",
                 recommendation="Set severity_policy.critical_blocks: true. Exceptional overrides require explicit owner approval and documented compensating controls outside normal config.",
-                related_gate="Gate 20 â€” Launch Decision",
+                related_gate="Gate 20 — Launch Decision",
                 blocks_launch=True,
             )
         )

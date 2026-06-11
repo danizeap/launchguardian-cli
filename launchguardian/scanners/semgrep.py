@@ -44,7 +44,14 @@ class SemgrepScanner:
             str(raw_output_path),
             str(target),
         ]
-        result = subprocess.run(command, cwd=str(target), capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                command, cwd=str(target), capture_output=True, text=True, timeout=900
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ScannerExecutionError(
+                f"Semgrep timed out after 900 seconds while scanning the local target path."
+            ) from exc
         if result.returncode not in {0, 1}:
             raise ScannerExecutionError("Semgrep failed while scanning the local target path.")
 

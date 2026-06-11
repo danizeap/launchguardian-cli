@@ -91,7 +91,9 @@ def test_version_command_returns_current_version(capsys) -> None:
         main(["--version"])
 
     assert exc.value.code == 0
-    assert capsys.readouterr().out.strip() == "0.1.0"
+    from launchguardian import __version__
+
+    assert capsys.readouterr().out.strip() == __version__
 
 
 def test_release_docs_exist() -> None:
@@ -1292,7 +1294,7 @@ def _mock_scanners(
             return "trivy"
         return None
 
-    def fake_run(command, cwd, capture_output, text):
+    def fake_run(command, cwd, capture_output, text, timeout=None):
         if command[0] == "gitleaks":
             report_path = Path(command[command.index("--report-path") + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1336,3 +1338,20 @@ def _trivy_result_with_vulnerability(
             }
         ],
     }
+
+
+def test_scanner_timeout_produces_execution_failure(tmp_path: Path, monkeypatch) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+
+    def fake_which(name):
+        return "gitleaks" if name == "gitleaks" else None
+
+    def timing_out_run(command, cwd, capture_output, text, timeout=None):
+        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout or 0)
+
+    monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", fake_which)
+    monkeypatch.setattr("launchguardian.scanners.gitleaks.subprocess.run", timing_out_run)
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == 2

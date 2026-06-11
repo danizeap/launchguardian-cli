@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1
+
+- Fixed double-encoded em-dashes in scanner gate names (consistent gate counting).
+- Added subprocess timeouts for Gitleaks/Semgrep/Trivy; timeouts surface as scanner execution failures (exit 2).
+- Added timeout regression test; version test tracks `__version__`.
+- Added MIT LICENSE, PyPI metadata, and GitHub Actions trusted-publishing workflow.
+- First PyPI release: `pip install launchguardian`.
+
+
 ## v0.1.0 - MVP
 
 Initial LaunchGuardian CLI MVP.

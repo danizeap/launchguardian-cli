@@ -46,7 +46,14 @@ class GitleaksScanner:
             "0",
             "--no-banner",
         ]
-        result = subprocess.run(command, cwd=str(target), capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                command, cwd=str(target), capture_output=True, text=True, timeout=300
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ScannerExecutionError(
+                f"Gitleaks timed out after 300 seconds while scanning the local target path."
+            ) from exc
         if result.returncode != 0:
             raise ScannerExecutionError("Gitleaks failed while scanning the local target path.")
 

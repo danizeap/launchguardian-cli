@@ -4,13 +4,32 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "launchguardian"
-version = "0.1.0"
-description = "Permission-bound LaunchGuardian CLI skeleton for validating LGF project files."
+version = "0.1.1"
+description = "Local, defensive, permission-bound security scanner and launch-readiness validator for the LaunchGuardian Framework (LGF). Part of the Drydock SDD+ toolchain."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Daniel Paez" }]
+keywords = ["security", "scanner", "launch-readiness", "sdd", "drydock", "vibe-coding", "gitleaks", "semgrep", "trivy"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Environment :: Console",
+]
 dependencies = [
     "PyYAML>=6.0.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/danizeap/launchguardian-cli"
+Issues = "https://github.com/danizeap/launchguardian-cli/issues"
+Changelog = "https://github.com/danizeap/launchguardian-cli/blob/main/CHANGELOG.md"
+Drydock = "https://github.com/danizeap/drydock"
 
 [project.optional-dependencies]
 dev = [
