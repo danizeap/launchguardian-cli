@@ -68,6 +68,7 @@ def validate_gate_applicability(path: Path | None) -> list[Finding]:
                         blocks_launch=True,
                     )
                 )
+        findings.extend(_trifecta_findings(gate, path))
     return findings
 
 
@@ -121,6 +122,69 @@ def _is_false(value: Any) -> bool:
 
 def _is_true(value: Any) -> bool:
     return value is True or (isinstance(value, str) and value.strip().lower() == "true")
+
+
+TRIFECTA_LEGS = ("private_data_access", "untrusted_content_exposure", "outbound_channel")
+
+# A mitigation or broken_leg written as one of these placeholders does NOT clear a
+# lethal trifecta. Without this, a lazy "TODO" / "none" silently un-blocks the one
+# "lethal" gate — the most realistic false-negative for this check.
+_TRIFECTA_NON_MITIGATIONS = frozenset({
+    "none", "n/a", "na", "n.a.", "todo", "to do", "to-do", "tbd", "tba", "tbc",
+    "pending", "wip", "later", "fixme", "xxx", "nil", "null", "?", "-", "--",
+    "not implemented", "not implemented yet", "none yet", "unknown", "n/a.",
+})
+
+
+def _is_meaningful_mitigation(value: Any) -> bool:
+    """A broken_leg / mitigation clears the trifecta only if it is a real, non-empty,
+    non-placeholder value."""
+    text = str(value or "").strip()
+    return bool(text) and text.casefold() not in _TRIFECTA_NON_MITIGATIONS
+
+
+def _trifecta_findings(gate: dict[str, Any], path: Path) -> list[Finding]:
+    """Flag an unmitigated lethal trifecta (LaunchGuardian Framework, Gate 15):
+    all three legs present with no broken leg and no mitigation recorded. Silent
+    when the block is absent, a leg is not explicitly true, or a mitigation/broken
+    leg is recorded — the CLI validates what the project stated, it does not infer
+    the legs (that is the applicability-detection feature)."""
+    block = gate.get("lethal_trifecta")
+    if not isinstance(block, dict):
+        return []
+    if not all(_is_true(block.get(leg)) for leg in TRIFECTA_LEGS):
+        return []
+    if _is_meaningful_mitigation(block.get("broken_leg")) or _is_meaningful_mitigation(block.get("mitigation")):
+        return []
+    label = _gate_label(gate)
+    return [
+        Finding(
+            title="Unmitigated lethal trifecta",
+            severity="high",
+            status="open",
+            category="gate_applicability",
+            source="launch_policy",
+            file_path=str(path),
+            description=(
+                f"{label} records all three lethal-trifecta legs — access to private data, "
+                "exposure to untrusted content, and an outbound channel — with no broken leg "
+                "and no mitigation. Prompt injection in the untrusted content can exfiltrate "
+                "the private data through the outbound channel."
+            ),
+            risk=(
+                "An AI agent, MCP server, or LLM tool-chain with all three legs is exploitable "
+                "regardless of Row-Level Security or read-only settings (the documented Supabase "
+                "MCP exfiltration class)."
+            ),
+            recommendation=(
+                "Break a leg: scope data access to the requesting user, isolate untrusted content "
+                "from the tool-calling context, or remove/human-gate the outbound channel. Record "
+                "the broken_leg or mitigation in the Gate 15 lethal_trifecta block."
+            ),
+            related_gate="Gate 15 — AI/RAG/Agent Security",
+            blocks_launch=True,
+        )
+    ]
 
 
 def _gate_label(gate: dict[str, Any]) -> str:

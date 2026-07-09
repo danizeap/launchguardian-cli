@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0
+
+- **Trifecta awareness (aligns with Drydock v0.4.0's Gate 15).** `validate-lgf` and `scan` now flag an **unmitigated lethal trifecta**: a gate-applicability entry whose `lethal_trifecta` block records all three legs (access to private data + exposure to untrusted content + an outbound channel) with no `broken_leg` and no `mitigation` becomes a High, launch-blocking finding on Gate 15. A recorded, **non-placeholder** mitigation or broken leg clears it (a lazy `TODO`/`none`/`N/A`/`tbd` does NOT silently un-block the lethal gate); partial or `unknown` legs are not flagged — the CLI validates what the project states and does not (yet) infer the legs from the codebase.
+- **Fixed report version drift.** Every emitted report hardcoded `launchguardian_version: "0.1.0"` regardless of the installed package. It now tracks `__version__`; the report's JSON `schema_version` (report shape) stays independent and unchanged. Regression-tested.
+- Suite: 73 tests (was 58).
+
 ## v0.1.1
 
 - Fixed double-encoded em-dashes in scanner gate names (consistent gate counting).

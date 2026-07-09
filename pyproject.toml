@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "launchguardian"
-version = "0.1.1"
+version = "0.2.0"
 description = "Local, defensive, permission-bound security scanner and launch-readiness validator for the LaunchGuardian Framework (LGF). Part of the Drydock SDD+ toolchain."
 readme = "README.md"
 requires-python = ">=3.11"

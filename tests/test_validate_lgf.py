@@ -1355,3 +1355,105 @@ def test_scanner_timeout_produces_execution_failure(tmp_path: Path, monkeypatch)
     exit_code = main(["scan", "--target", str(tmp_path)])
 
     assert exit_code == 2
+
+
+# --- v0.2.0: report version fix + Gate 15 lethal-trifecta validation ----------
+from launchguardian import __version__ as _LG_VERSION
+
+
+def test_report_version_tracks_package_version(tmp_path: Path) -> None:
+    """Regression: report to_dict used to hardcode '0.1.0' regardless of the
+    real package version."""
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert report["launchguardian_version"] == _LG_VERSION
+
+
+_TRIFECTA_GATE = """
+gates:
+  - gate_id: 15
+    gate_name: "Gate 15 — AI/RAG/Agent Security"
+    applies: true
+    confidence: "high"
+    lethal_trifecta:
+      private_data_access: {pd}
+      untrusted_content_exposure: {uc}
+      outbound_channel: {ob}
+      broken_leg: "{broken}"
+      mitigation: "{mitigation}"
+"""
+
+
+def _trifecta_yaml(pd="true", uc="true", ob="true", broken="", mitigation=""):
+    return _TRIFECTA_GATE.format(pd=pd, uc=uc, ob=ob, broken=broken, mitigation=mitigation)
+
+
+def test_unmitigated_trifecta_blocks(tmp_path: Path) -> None:
+    _write_required_files(tmp_path, gate_applicability=_trifecta_yaml())
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    finding = next(f for f in report["findings"] if f["title"] == "Unmitigated lethal trifecta")
+    assert finding["severity"] == "high"
+    assert finding["blocks_launch"] is True
+    assert finding["related_gate"] == "Gate 15 — AI/RAG/Agent Security"
+
+
+def test_trifecta_with_mitigation_is_clean(tmp_path: Path) -> None:
+    _write_required_files(
+        tmp_path, gate_applicability=_trifecta_yaml(mitigation="Outbound tool calls human-gated."))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert not any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+def test_trifecta_with_broken_leg_is_clean(tmp_path: Path) -> None:
+    _write_required_files(tmp_path, gate_applicability=_trifecta_yaml(broken="outbound_channel"))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert not any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+def test_partial_trifecta_is_not_flagged(tmp_path: Path) -> None:
+    # only two legs present -> not the trifecta
+    _write_required_files(tmp_path, gate_applicability=_trifecta_yaml(ob="false"))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert not any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+def test_unknown_legs_are_not_flagged(tmp_path: Path) -> None:
+    # the CLI validates what's stated; unknown legs are not inferred as present
+    _write_required_files(
+        tmp_path, gate_applicability=_trifecta_yaml(pd="unknown", uc="unknown", ob="unknown"))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert not any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "placeholder", ["TODO", "none", "N/A", "tbd", "not implemented yet", "-", "?"]
+)
+def test_placeholder_mitigation_does_not_clear_trifecta(tmp_path: Path, placeholder: str) -> None:
+    """A lazy placeholder must not silently un-block the 'lethal' gate."""
+    _write_required_files(tmp_path, gate_applicability=_trifecta_yaml(mitigation=placeholder))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+def test_placeholder_broken_leg_does_not_clear_trifecta(tmp_path: Path) -> None:
+    _write_required_files(tmp_path, gate_applicability=_trifecta_yaml(broken="none"))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])
+
+
+def test_real_mitigation_still_clears_trifecta(tmp_path: Path) -> None:
+    """A genuine mitigation must still clear it (no false positive from the placeholder list)."""
+    _write_required_files(
+        tmp_path,
+        gate_applicability=_trifecta_yaml(mitigation="Outbound tool calls require human approval."))
+    assert main(["validate-lgf", "--target", str(tmp_path)]) == EXIT_VALID
+    report = _read_report(tmp_path)
+    assert not any(f["title"] == "Unmitigated lethal trifecta" for f in report["findings"])

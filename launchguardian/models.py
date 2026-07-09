@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from . import __version__
+
+# The report JSON schema version is independent of the package version and is
+# bumped only when the report shape changes.
+REPORT_SCHEMA_VERSION = "0.1.0"
+
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
 FindingStatus = Literal["open", "fixed", "accepted", "false_positive", "needs_review"]
@@ -145,9 +151,9 @@ class ValidationReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_name": "launchguardian.report",
-            "schema_version": "0.1.0",
+            "schema_version": REPORT_SCHEMA_VERSION,
             "generated_at": self.generated_at,
-            "launchguardian_version": "0.1.0",
+            "launchguardian_version": __version__,
             "target": str(self.target),
             "mode": self.mode,
             "validation_mode": self.validation_mode,
