@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -1560,6 +1561,30 @@ def test_repo_github_actions_workflows_exist_and_run_expected_commands() -> None
     assert "python -m launchguardian.cli scan --target . --framework-mode" in launchguardian_text
     assert "--strict-scanners" not in launchguardian_text
     assert "actions/upload-artifact" in launchguardian_text
+
+
+def test_repository_and_template_actions_use_full_commit_shas() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow_paths = [
+        root / ".github" / "workflows" / "tests.yml",
+        root / ".github" / "workflows" / "launchguardian.yml",
+        root / ".github" / "workflows" / "publish.yml",
+        root / "templates" / "github-actions" / "launchguardian.yml",
+        root / "templates" / "github-actions" / "launchguardian-nonstrict.yml",
+    ]
+
+    action_references: list[str] = []
+    for path in workflow_paths:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            match = re.search(r"\buses:\s*([^\s#]+)", line)
+            if match:
+                action_references.append(match.group(1))
+
+    assert len(action_references) == 16
+    assert all(
+        re.fullmatch(r"[^@]+@[0-9a-f]{40}", reference)
+        for reference in action_references
+    )
 
 
 def _write_required_files(tmp_path: Path, gate_applicability: str) -> None:

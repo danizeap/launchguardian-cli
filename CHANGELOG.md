@@ -12,6 +12,8 @@
 - Pinned external-scanner subprocess text handling and Python child
   environments to UTF-8. Invalidly encoded raw JSON now becomes an explicit
   scanner execution failure instead of a Windows traceback.
+- Pinned every repository and template GitHub Action reference to a verified
+  full commit SHA while retaining readable release comments.
 
 ## v0.2.0
 
