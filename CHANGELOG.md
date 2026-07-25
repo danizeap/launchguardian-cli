@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Added exact, reviewed Semgrep finding dispositions for evidence-backed
+  `not_applicable` decisions. Findings remain visible with their original
+  severity and blocking nature; malformed/wildcard dispositions block,
+  unmatched entries are reported, Critical findings refuse disposition, and
+  scans that depend on dispositions report `APPROVED_WITH_DISPOSITIONS`.
+- Bumped report and normalized-finding schema versions to `0.2.0` for the new
+  rule ID, disposition, and status-count fields.
+- Pinned external-scanner subprocess text handling and Python child
+  environments to UTF-8. Invalidly encoded raw JSON now becomes an explicit
+  scanner execution failure instead of a Windows traceback.
+
 ## v0.2.0
 
 - **Trifecta awareness (aligns with Drydock v0.4.0's Gate 15).** `validate-lgf` and `scan` now flag an **unmitigated lethal trifecta**: a gate-applicability entry whose `lethal_trifecta` block records all three legs (access to private data + exposure to untrusted content + an outbound channel) with no `broken_leg` and no `mitigation` becomes a High, launch-blocking finding on Gate 15. A recorded, **non-placeholder** mitigation or broken leg clears it (a lazy `TODO`/`none`/`N/A`/`tbd` does NOT silently un-block the lethal gate); partial or `unknown` legs are not flagged — the CLI validates what the project states and does not (yet) infer the legs from the codebase.

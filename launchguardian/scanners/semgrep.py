@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models import Finding
-from .base import ScannerExecutionError, ScannerResult
+from .base import ScannerExecutionError, ScannerResult, utf8_scanner_environment
 
 
 SEMGREP_CODE_GATE = "Gate 3 — Code Security"
@@ -46,7 +46,14 @@ class SemgrepScanner:
         ]
         try:
             result = subprocess.run(
-                command, cwd=str(target), capture_output=True, text=True, timeout=900
+                command,
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=utf8_scanner_environment(),
+                timeout=900,
             )
         except subprocess.TimeoutExpired as exc:
             raise ScannerExecutionError(
@@ -86,8 +93,10 @@ def _scanner_unavailable_finding(*, blocks_launch: bool = False) -> Finding:
 def _normalize_semgrep_output(raw_output_path: Path) -> list[Finding]:
     try:
         raw_data = json.loads(raw_output_path.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError as exc:
-        raise ScannerExecutionError("Semgrep produced invalid JSON output.") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ScannerExecutionError(
+            "Semgrep produced invalid UTF-8 JSON output."
+        ) from exc
 
     results = raw_data.get("results", []) if isinstance(raw_data, dict) else []
     if not isinstance(results, list):
@@ -116,6 +125,7 @@ def _normalize_result(result: dict[str, Any]) -> Finding:
         status="open",
         category="code_security",
         source="semgrep",
+        rule_id=rule_id,
         file_path=file_path,
         line=line,
         description=message or "Semgrep detected a static analysis security finding.",

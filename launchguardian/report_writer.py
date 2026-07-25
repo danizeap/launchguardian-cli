@@ -30,7 +30,7 @@ def write_normalized_findings(findings: list[Finding], output_dir: Path) -> Path
         json.dumps(
             {
                 "schema_name": "launchguardian.normalized_findings",
-                "schema_version": "0.1.0",
+                "schema_version": "0.2.0",
                 "findings": [finding.to_dict() for finding in findings],
             },
             indent=2,
@@ -48,7 +48,13 @@ def _render_markdown(report: ValidationReport) -> str:
     exclude_config = lg_config.get("exclude", {}) if isinstance(lg_config.get("exclude"), dict) else {}
     disabled_scanners = lg_config.get("disabled_scanners", {})
     severity_policy = lg_config.get("severity_policy", {})
+    configured_dispositions = lg_config.get("finding_dispositions", [])
+    if not isinstance(configured_dispositions, list):
+        configured_dispositions = []
     config_findings = [finding for finding in report.findings if finding.source == "config"]
+    disposed_findings = [
+        finding for finding in report.findings if finding.disposition is not None
+    ]
     blocking_findings = report.blocking_findings
     scanner_finding_count = sum(scanner_counts.values())
     lines = [
@@ -73,6 +79,7 @@ def _render_markdown(report: ValidationReport) -> str:
         f"- Scanner findings: **{scanner_finding_count}**",
         f"- Blocking findings: **{len(blocking_findings)}**",
         f"- Severity counts: {_inline_counts(report.counts_by_severity)}",
+        f"- Finding status counts: {_inline_status_counts(report.counts_by_status)}",
         "",
         "## Scanner Summary",
         "",
@@ -185,8 +192,26 @@ def _render_markdown(report: ValidationReport) -> str:
             else "`default`"
         ),
         f"- Config warnings/blockers: **{len(config_findings)}**",
+        f"- Reviewed finding dispositions configured: **{len(configured_dispositions)}**",
+        f"- Findings with applied dispositions: **{len(disposed_findings)}**",
         ]
     )
+
+    lines.extend(
+        [
+        "",
+        "## Reviewed Finding Dispositions",
+        "",
+    ])
+    if configured_dispositions:
+        lines.extend(
+            _render_disposition_table(
+                configured_dispositions,
+                disposed_findings,
+            )
+        )
+    else:
+        lines.append("No reviewed finding dispositions are configured.")
 
     lines.extend(
         [
@@ -220,6 +245,15 @@ def _decision_sentence(report: ValidationReport, scanner_finding_count: int, blo
         return (
             f"Scan completed with **{scanner_finding_count}** scanner finding(s), but LGF validation was skipped."
         )
+    if report.launch_status == "APPROVED_WITH_DISPOSITIONS":
+        disposed_count = sum(
+            1 for finding in report.findings if finding.disposition is not None
+        )
+        return (
+            f"No open blocking findings remain, and **{disposed_count}** finding(s) "
+            "use exact reviewed dispositions. The recorded approver metadata is "
+            "auditable project evidence, not authenticated proof of human identity."
+        )
     return "No open blocking findings were found by the enabled local checks."
 
 
@@ -227,10 +261,16 @@ def _inline_counts(counts: dict[str, int]) -> str:
     return ", ".join(f"**{name}**: {counts.get(name, 0)}" for name in SEVERITY_ORDER)
 
 
+def _inline_status_counts(counts: dict[str, int]) -> str:
+    return ", ".join(
+        f"**{name}**: {count}" for name, count in sorted(counts.items())
+    ) or "**none**: 0"
+
+
 def _render_finding_table(
     findings: list[Finding], *, include_gate: bool, include_location: bool
 ) -> list[str]:
-    headers = ["Severity", "Blocks", "Source"]
+    headers = ["Severity", "Blocks", "Status", "Source"]
     if include_gate:
         headers.append("Gate")
     if include_location:
@@ -245,6 +285,7 @@ def _render_finding_table(
         row = [
             finding.severity,
             "yes" if finding.blocks_launch else "no",
+            finding.status,
             finding.source,
         ]
         if include_gate:
@@ -252,6 +293,51 @@ def _render_finding_table(
         if include_location:
             row.append(_finding_location(finding))
         row.extend([finding.title, finding.risk, finding.recommendation])
+        lines.append("| " + " | ".join(_escape_table(value) for value in row) + " |")
+    return lines
+
+
+def _render_disposition_table(
+    dispositions: list[dict], disposed_findings: list[Finding]
+) -> list[str]:
+    headers = [
+        "Source",
+        "Rule ID",
+        "Status",
+        "Approved",
+        "Reason",
+        "Evidence",
+        "Applied Findings",
+    ]
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for disposition in dispositions:
+        source = str(disposition.get("source") or "")
+        rule_id = str(disposition.get("rule_id") or "")
+        applied_count = sum(
+            1
+            for finding in disposed_findings
+            if finding.source == source and finding.rule_id == rule_id
+        )
+        approved = " by ".join(
+            part
+            for part in (
+                str(disposition.get("approved_on") or ""),
+                str(disposition.get("approved_by") or ""),
+            )
+            if part
+        )
+        row = [
+            source,
+            rule_id,
+            str(disposition.get("status") or ""),
+            approved,
+            str(disposition.get("reason") or ""),
+            str(disposition.get("evidence") or ""),
+            str(applied_count),
+        ]
         lines.append("| " + " | ".join(_escape_table(value) for value in row) + " |")
     return lines
 
@@ -292,6 +378,11 @@ def _recommended_actions(report: ValidationReport) -> list[str]:
         actions.append("Run again without `--skip-lgf-validation` before making a launch decision.")
     if report.launch_status == "INCOMPLETE":
         actions.append("Complete missing scanner or LGF coverage before treating this as approved.")
+    if any(finding.disposition is not None for finding in report.findings):
+        actions.append(
+            "Reconfirm each reviewed finding disposition when its rule, evidence, "
+            "supported-runtime boundary, or launch scope changes."
+        )
     if not actions:
         actions.append("Review non-blocking findings and decide whether to fix, accept, or monitor them.")
     actions.append("Re-run `launchguardian scan --target .` after remediation and attach the updated report.")

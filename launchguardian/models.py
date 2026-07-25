@@ -9,12 +9,42 @@ from . import __version__
 
 # The report JSON schema version is independent of the package version and is
 # bumped only when the report shape changes.
-REPORT_SCHEMA_VERSION = "0.1.0"
+REPORT_SCHEMA_VERSION = "0.2.0"
 
 
 Severity = Literal["critical", "high", "medium", "low", "info"]
-FindingStatus = Literal["open", "fixed", "accepted", "false_positive", "needs_review"]
+FindingStatus = Literal[
+    "open",
+    "fixed",
+    "accepted",
+    "false_positive",
+    "not_applicable",
+    "needs_review",
+]
+DispositionStatus = Literal["not_applicable"]
 SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
+
+
+@dataclass(frozen=True)
+class FindingDisposition:
+    source: str
+    rule_id: str
+    status: DispositionStatus
+    reason: str
+    evidence: str
+    approved_by: str
+    approved_on: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "source": self.source,
+            "rule_id": self.rule_id,
+            "status": self.status,
+            "reason": self.reason,
+            "evidence": self.evidence,
+            "approved_by": self.approved_by,
+            "approved_on": self.approved_on,
+        }
 
 
 @dataclass(frozen=True)
@@ -37,6 +67,8 @@ class Finding:
     installed_version: str = ""
     fixed_version: str = ""
     vulnerability_id: str = ""
+    rule_id: str = ""
+    disposition: FindingDisposition | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -53,11 +85,13 @@ class Finding:
             "installed_version": self.installed_version,
             "fixed_version": self.fixed_version,
             "vulnerability_id": self.vulnerability_id,
+            "rule_id": self.rule_id,
             "description": self.description,
             "risk": self.risk,
             "recommendation": self.recommendation,
             "related_gate": self.related_gate,
             "blocks_launch": self.blocks_launch,
+            "disposition": self.disposition.to_dict() if self.disposition else None,
         }
 
 
@@ -110,6 +144,8 @@ class ValidationReport:
             for finding in self.findings
         ):
             return "INCOMPLETE"
+        if any(finding.disposition is not None for finding in self.findings):
+            return "APPROVED_WITH_DISPOSITIONS"
         return "APPROVED"
 
     @property
@@ -130,6 +166,13 @@ class ValidationReport:
         counts: dict[str, int] = {}
         for finding in self.findings:
             counts[finding.source] = counts.get(finding.source, 0) + 1
+        return counts
+
+    @property
+    def counts_by_status(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for finding in self.findings:
+            counts[finding.status] = counts.get(finding.status, 0) + 1
         return counts
 
     @property
@@ -168,6 +211,7 @@ class ValidationReport:
             "scanner_blocking_counts": self.scanner_blocking_counts,
             "counts_by_severity": self.counts_by_severity,
             "counts_by_scanner": self.counts_by_scanner,
+            "counts_by_status": self.counts_by_status,
             "counts_by_gate": self.counts_by_gate,
             "blocking_findings": [finding.to_dict() for finding in self.blocking_findings],
             "launchguardian_config": self.launchguardian_config,

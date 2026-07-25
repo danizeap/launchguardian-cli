@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from launchguardian.cli import EXIT_BLOCKED, EXIT_VALID, main
+from launchguardian.config import apply_finding_dispositions, load_launchguardian_config
+from launchguardian.models import Finding
+from launchguardian.scanners.base import ScannerExecutionError
+from launchguardian.scanners.semgrep import SemgrepScanner
 
 
 def test_missing_gate_applicability_file(tmp_path: Path) -> None:
@@ -444,6 +448,243 @@ def test_scan_mocked_semgrep_high_finding_blocks_launch(
     assert report["scanner_blocking_counts"]["semgrep"] == 1
 
 
+def test_reviewed_exact_semgrep_disposition_keeps_finding_visible_and_unblocks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+finding_dispositions:
+  - source: semgrep
+    rule_id: python.lang.compatibility.python36.python36-compatibility-Popen1
+    status: not_applicable
+    reason: "The rule targets Python versions below the supported runtime floor."
+    evidence: "pyproject.toml declares requires-python >=3.11."
+    approved_by: "Daniel Paez"
+    approved_on: "2025-07-25"
+""",
+    )
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.lang.compatibility.python36.python36-compatibility-Popen1",
+                "path": "app.py",
+                "start": {"line": 12},
+                "extra": {
+                    "severity": "ERROR",
+                    "message": "The errors argument to Popen is available on Python 3.6+.",
+                    "metadata": {"category": "compatibility"},
+                },
+            }
+        ],
+        trivy_results=[],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_VALID
+    report = _read_report(tmp_path)
+    finding = next(
+        finding for finding in report["findings"] if finding["source"] == "semgrep"
+    )
+    assert report["launch_status"] == "APPROVED_WITH_DISPOSITIONS"
+    assert report["schema_version"] == "0.2.0"
+    assert report["scanner_counts"]["semgrep"] == 1
+    assert report["scanner_blocking_counts"]["semgrep"] == 0
+    assert report["counts_by_status"]["not_applicable"] == 1
+    assert finding["severity"] == "high"
+    assert finding["blocks_launch"] is True
+    assert finding["status"] == "not_applicable"
+    assert finding["rule_id"].endswith("Popen1")
+    assert finding["disposition"]["approved_by"] == "Daniel Paez"
+    assert finding["disposition"]["evidence"].startswith("pyproject.toml")
+    markdown = (
+        tmp_path
+        / "reports"
+        / "launchguardian"
+        / "launchguardian-report.md"
+    ).read_text(encoding="utf-8")
+    assert "## Reviewed Finding Dispositions" in markdown
+    assert "not_applicable" in markdown
+    assert "Applied Findings" in markdown
+
+
+def test_invalid_disposition_does_not_change_blocking_finding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+finding_dispositions:
+  - source: semgrep
+    rule_id: python.compatibility
+    status: not_applicable
+    reason: "Unsupported runtime rule."
+    approved_by: "Daniel Paez"
+    approved_on: "2025-07-25"
+""",
+    )
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.compatibility",
+                "path": "app.py",
+                "start": {"line": 1},
+                "extra": {"severity": "ERROR", "message": "Compatibility finding."},
+            }
+        ],
+        trivy_results=[],
+    )
+
+    exit_code = main(["scan", "--target", str(tmp_path)])
+
+    assert exit_code == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    finding = next(
+        finding for finding in report["findings"] if finding["source"] == "semgrep"
+    )
+    assert finding["status"] == "open"
+    assert finding["disposition"] is None
+    assert any(
+        item["title"] == "Finding disposition configuration is invalid"
+        and item["blocks_launch"] is True
+        for item in report["findings"]
+    )
+
+
+def test_wildcard_disposition_is_rejected_and_cannot_match(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+finding_dispositions:
+  - source: semgrep
+    rule_id: "python.compatibility.*"
+    status: not_applicable
+    reason: "Unsupported runtime rule family."
+    evidence: "pyproject.toml declares requires-python >=3.11."
+    approved_by: "Daniel Paez"
+    approved_on: "2025-07-25"
+""",
+    )
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.compatibility.Popen",
+                "path": "app.py",
+                "start": {"line": 1},
+                "extra": {"severity": "ERROR", "message": "Compatibility finding."},
+            }
+        ],
+        trivy_results=[],
+    )
+
+    assert main(["scan", "--target", str(tmp_path)]) == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        "wildcard characters are forbidden" in finding["description"]
+        for finding in report["findings"]
+        if finding["source"] == "config"
+    )
+    semgrep_finding = next(
+        finding for finding in report["findings"] if finding["source"] == "semgrep"
+    )
+    assert semgrep_finding["status"] == "open"
+
+
+def test_unused_exact_disposition_is_visible_and_does_not_hide_another_rule(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _write_required_files(tmp_path, gate_applicability="gates: []\n")
+    _write_launchguardian_config(
+        tmp_path,
+        """
+finding_dispositions:
+  - source: semgrep
+    rule_id: python.expected-rule
+    status: not_applicable
+    reason: "The expected rule targets an unsupported runtime."
+    evidence: "pyproject.toml declares requires-python >=3.11."
+    approved_by: "Daniel Paez"
+    approved_on: "2025-07-25"
+""",
+    )
+    _mock_scanners(
+        monkeypatch,
+        gitleaks_findings=[],
+        semgrep_findings=[
+            {
+                "check_id": "python.renamed-rule",
+                "path": "app.py",
+                "start": {"line": 1},
+                "extra": {"severity": "ERROR", "message": "Renamed rule finding."},
+            }
+        ],
+        trivy_results=[],
+    )
+
+    assert main(["scan", "--target", str(tmp_path)]) == EXIT_BLOCKED
+    report = _read_report(tmp_path)
+    assert any(
+        finding["title"] == "Configured finding disposition was not used"
+        and finding["status"] == "needs_review"
+        for finding in report["findings"]
+    )
+    semgrep_finding = next(
+        finding for finding in report["findings"] if finding["source"] == "semgrep"
+    )
+    assert semgrep_finding["status"] == "open"
+    assert semgrep_finding["blocks_launch"] is True
+
+
+def test_critical_finding_cannot_be_disposed_by_config(tmp_path: Path) -> None:
+    _write_launchguardian_config(
+        tmp_path,
+        """
+finding_dispositions:
+  - source: semgrep
+    rule_id: semgrep.critical-rule
+    status: not_applicable
+    reason: "The rule does not apply to this deployment boundary."
+    evidence: "The reviewed deployment manifest excludes the affected component."
+    approved_by: "Daniel Paez"
+    approved_on: "2025-07-25"
+""",
+    )
+    config = load_launchguardian_config(tmp_path)
+    original = Finding(
+        title="Critical finding",
+        severity="critical",
+        status="open",
+        category="code_security",
+        source="semgrep",
+        rule_id="semgrep.critical-rule",
+        description="Critical scanner finding.",
+        risk="Critical risk.",
+        recommendation="Fix it.",
+        blocks_launch=True,
+    )
+
+    resolved, policy_findings = apply_finding_dispositions([original], config)
+
+    assert resolved == [original]
+    assert any(
+        finding.title == "Critical finding disposition was refused"
+        and finding.blocks_launch is True
+        for finding in policy_findings
+    )
+
+
 def test_scan_mocked_semgrep_medium_finding_is_non_blocking(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -502,6 +743,103 @@ def test_scan_writes_raw_semgrep_output_when_semgrep_runs(
 
     assert exit_code == EXIT_VALID
     assert (tmp_path / "reports" / "launchguardian" / "raw" / "semgrep-results.json").is_file()
+
+
+def test_semgrep_process_and_raw_json_are_pinned_to_utf8(
+    tmp_path: Path, monkeypatch
+) -> None:
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "launchguardian.scanners.semgrep.shutil.which", lambda name: "semgrep"
+    )
+
+    def utf8_semgrep_run(
+        command,
+        cwd,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        env=None,
+        timeout=None,
+    ):
+        observed.update(
+            {
+                "encoding": encoding,
+                "errors": errors,
+                "python_utf8": env.get("PYTHONUTF8"),
+                "python_io_encoding": env.get("PYTHONIOENCODING"),
+            }
+        )
+        report_path = Path(command[command.index("--output") + 1])
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {
+                            "check_id": "python.unicode-message",
+                            "path": "app.py",
+                            "start": {"line": 1},
+                            "extra": {
+                                "severity": "WARNING",
+                                "message": "Non-ASCII — finding.",
+                            },
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="✓", stderr="")
+
+    monkeypatch.setattr(
+        "launchguardian.scanners.semgrep.subprocess.run", utf8_semgrep_run
+    )
+
+    result = SemgrepScanner().scan(tmp_path, tmp_path / "report")
+
+    assert observed == {
+        "encoding": "utf-8",
+        "errors": "replace",
+        "python_utf8": "1",
+        "python_io_encoding": "utf-8",
+    }
+    assert result.findings[0].description == "Non-ASCII — finding."
+
+
+def test_invalid_semgrep_json_encoding_is_a_scanner_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        "launchguardian.scanners.semgrep.shutil.which", lambda name: "semgrep"
+    )
+
+    def invalid_semgrep_run(
+        command,
+        cwd,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        env=None,
+        timeout=None,
+    ):
+        report_path = Path(command[command.index("--output") + 1])
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_bytes(b'{"results":[{"extra":{"message":"\x97"}}]}')
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(
+        "launchguardian.scanners.semgrep.subprocess.run", invalid_semgrep_run
+    )
+
+    with pytest.raises(
+        ScannerExecutionError,
+        match="Semgrep produced invalid UTF-8 JSON output",
+    ):
+        SemgrepScanner().scan(tmp_path, tmp_path / "report")
 
 
 def test_scan_trivy_missing_produces_scanner_unavailable_finding(
@@ -1294,7 +1632,16 @@ def _mock_scanners(
             return "trivy"
         return None
 
-    def fake_run(command, cwd, capture_output, text, timeout=None):
+    def fake_run(
+        command,
+        cwd,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        env=None,
+        timeout=None,
+    ):
         if command[0] == "gitleaks":
             report_path = Path(command[command.index("--report-path") + 1])
             report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1346,7 +1693,16 @@ def test_scanner_timeout_produces_execution_failure(tmp_path: Path, monkeypatch)
     def fake_which(name):
         return "gitleaks" if name == "gitleaks" else None
 
-    def timing_out_run(command, cwd, capture_output, text, timeout=None):
+    def timing_out_run(
+        command,
+        cwd,
+        capture_output,
+        text,
+        encoding=None,
+        errors=None,
+        env=None,
+        timeout=None,
+    ):
         raise subprocess.TimeoutExpired(cmd=command, timeout=timeout or 0)
 
     monkeypatch.setattr("launchguardian.scanners.gitleaks.shutil.which", fake_which)

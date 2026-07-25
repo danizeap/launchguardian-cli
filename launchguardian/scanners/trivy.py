@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models import Finding
-from .base import ScannerExecutionError, ScannerResult
+from .base import ScannerExecutionError, ScannerResult, utf8_scanner_environment
 
 
 TRIVY_SUPPLY_CHAIN_GATE = "Gate 10 — Dependency, SBOM & Supply Chain"
@@ -45,7 +45,14 @@ class TrivyScanner:
         ]
         try:
             result = subprocess.run(
-                command, cwd=str(target), capture_output=True, text=True, timeout=900
+                command,
+                cwd=str(target),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=utf8_scanner_environment(),
+                timeout=900,
             )
         except subprocess.TimeoutExpired as exc:
             raise ScannerExecutionError(
@@ -85,8 +92,10 @@ def _scanner_unavailable_finding(*, blocks_launch: bool = False) -> Finding:
 def _normalize_trivy_output(raw_output_path: Path) -> list[Finding]:
     try:
         raw_data = json.loads(raw_output_path.read_text(encoding="utf-8") or "{}")
-    except json.JSONDecodeError as exc:
-        raise ScannerExecutionError("Trivy produced invalid JSON output.") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ScannerExecutionError(
+            "Trivy produced invalid UTF-8 JSON output."
+        ) from exc
 
     results = raw_data.get("Results", []) if isinstance(raw_data, dict) else []
     if not isinstance(results, list):

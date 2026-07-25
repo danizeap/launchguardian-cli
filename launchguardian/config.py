@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import fnmatch
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .models import Finding
+from .models import Finding, FindingDisposition
 
 
 CONFIG_FILE_NAME = "launchguardian.yml"
@@ -53,6 +54,7 @@ class LaunchGuardianConfig:
     exclude_globs: tuple[str, ...] = ("**/*.min.js", "**/fixtures/**")
     scanners: dict[str, ScannerConfig] = field(default_factory=dict)
     severity_policy: dict[str, bool] = field(default_factory=lambda: dict(DEFAULT_SEVERITY_POLICY))
+    finding_dispositions: tuple[FindingDisposition, ...] = ()
     config_findings: tuple[Finding, ...] = ()
 
     @property
@@ -90,6 +92,9 @@ class LaunchGuardianConfig:
                 "globs": list(self.exclude_globs),
             },
             "severity_policy": self.severity_policy,
+            "finding_dispositions": [
+                disposition.to_dict() for disposition in self.finding_dispositions
+            ],
         }
 
 
@@ -120,6 +125,9 @@ def load_launchguardian_config(target: Path) -> LaunchGuardianConfig:
     if not isinstance(raw, dict):
         raw = {}
 
+    finding_dispositions, disposition_findings = _finding_dispositions(
+        raw.get("finding_dispositions"), config_path
+    )
     config = LaunchGuardianConfig(
         target=resolved_target,
         path=config_path,
@@ -130,6 +138,7 @@ def load_launchguardian_config(target: Path) -> LaunchGuardianConfig:
         exclude_globs=_string_tuple(_nested_dict(raw, "exclude").get("globs"), ("**/*.min.js", "**/fixtures/**")),
         scanners=_scanner_configs(_nested_dict(raw, "scanners")),
         severity_policy=_severity_policy(_nested_dict(raw, "severity_policy")),
+        finding_dispositions=finding_dispositions,
     )
     return LaunchGuardianConfig(
         target=config.target,
@@ -141,8 +150,91 @@ def load_launchguardian_config(target: Path) -> LaunchGuardianConfig:
         exclude_globs=config.exclude_globs,
         scanners=config.scanners,
         severity_policy=config.severity_policy,
-        config_findings=tuple(_config_policy_findings(config)),
+        finding_dispositions=config.finding_dispositions,
+        config_findings=tuple(
+            [*_config_policy_findings(config), *disposition_findings]
+        ),
     )
+
+
+def apply_finding_dispositions(
+    findings: list[Finding], config: LaunchGuardianConfig
+) -> tuple[list[Finding], list[Finding]]:
+    configured = {
+        (disposition.source, disposition.rule_id): disposition
+        for disposition in config.finding_dispositions
+    }
+    matched: set[tuple[str, str]] = set()
+    resolved: list[Finding] = []
+    policy_findings: list[Finding] = []
+
+    for finding in findings:
+        key = (finding.source, finding.rule_id)
+        disposition = configured.get(key)
+        if disposition is None:
+            resolved.append(finding)
+            continue
+
+        matched.add(key)
+        if finding.severity == "critical":
+            resolved.append(finding)
+            policy_findings.append(
+                _disposition_policy_finding(
+                    title="Critical finding disposition was refused",
+                    severity="high",
+                    status="open",
+                    config_path=config.path,
+                    description=(
+                        f"The configured disposition for {finding.source}:{finding.rule_id} "
+                        "matched a Critical finding and was not applied."
+                    ),
+                    risk=(
+                        "Critical findings are canonical launch blockers and cannot be "
+                        "downgraded by launchguardian.yml."
+                    ),
+                    recommendation=(
+                        "Remediate the Critical finding or remove the affected feature "
+                        "from launch scope."
+                    ),
+                    blocks_launch=True,
+                )
+            )
+            continue
+
+        resolved.append(
+            replace(
+                finding,
+                status=disposition.status,
+                disposition=disposition,
+            )
+        )
+
+    for key, disposition in configured.items():
+        if key in matched:
+            continue
+        policy_findings.append(
+            _disposition_policy_finding(
+                title="Configured finding disposition was not used",
+                severity="info",
+                status="needs_review",
+                config_path=config.path,
+                description=(
+                    f"No current finding matched the exact disposition key "
+                    f"{disposition.source}:{disposition.rule_id}."
+                ),
+                risk=(
+                    "An unused disposition may be stale, but it cannot hide a renamed "
+                    "or different finding because matching is exact."
+                ),
+                recommendation=(
+                    "Confirm the rule is intentionally absent and remove stale "
+                    "dispositions when they are no longer needed."
+                ),
+                blocks_launch=False,
+            )
+        )
+
+    return resolved, policy_findings
 
 
 def is_excluded(path: Path, target: Path, config: LaunchGuardianConfig) -> bool:
@@ -188,6 +280,91 @@ def _scanner_configs(data: dict[str, Any]) -> dict[str, ScannerConfig]:
     return configs
 
 
+def _finding_dispositions(
+    value: Any, config_path: Path
+) -> tuple[tuple[FindingDisposition, ...], list[Finding]]:
+    if value is None:
+        return (), []
+    if not isinstance(value, list):
+        return (), [
+            _invalid_disposition_finding(
+                config_path,
+                "finding_dispositions must be a YAML list of exact reviewed rule entries.",
+            )
+        ]
+
+    dispositions: list[FindingDisposition] = []
+    findings: list[Finding] = []
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            findings.append(
+                _invalid_disposition_finding(
+                    config_path,
+                    f"finding_dispositions entry {index} must be a mapping.",
+                )
+            )
+            continue
+
+        source = str(item.get("source") or "").strip().lower()
+        rule_id = str(item.get("rule_id") or "").strip()
+        status = str(item.get("status") or "").strip().lower()
+        reason = str(item.get("reason") or "").strip()
+        evidence = str(item.get("evidence") or "").strip()
+        approved_by = str(item.get("approved_by") or "").strip()
+        approved_on = str(item.get("approved_on") or "").strip()
+        errors: list[str] = []
+
+        if source != "semgrep":
+            errors.append("source must be exactly 'semgrep'")
+        if not rule_id:
+            errors.append("rule_id is required")
+        elif any(character in rule_id for character in "*?[]"):
+            errors.append("rule_id must be exact; wildcard characters are forbidden")
+        if status != "not_applicable":
+            errors.append("status must be exactly 'not_applicable'")
+        if not _meaningful_review_text(reason):
+            errors.append("reason must be non-empty and non-placeholder")
+        if not _meaningful_review_text(evidence):
+            errors.append("evidence must be non-empty and non-placeholder")
+        if not _meaningful_review_text(approved_by):
+            errors.append("approved_by must identify a reviewer")
+        if not _valid_approval_date(approved_on):
+            errors.append(
+                "approved_on must be a valid, non-future ISO date (YYYY-MM-DD)"
+            )
+
+        key = (source, rule_id)
+        if source and rule_id:
+            if key in seen:
+                errors.append("duplicate source and rule_id")
+            seen.add(key)
+
+        if errors:
+            findings.append(
+                _invalid_disposition_finding(
+                    config_path,
+                    f"finding_dispositions entry {index} is invalid: "
+                    + "; ".join(errors)
+                    + ".",
+                )
+            )
+            continue
+
+        dispositions.append(
+            FindingDisposition(
+                source=source,
+                rule_id=rule_id,
+                status="not_applicable",
+                reason=reason,
+                evidence=evidence,
+                approved_by=approved_by,
+                approved_on=approved_on,
+            )
+        )
+    return tuple(dispositions), findings
+
+
 def _severity_policy(data: dict[str, Any]) -> dict[str, bool]:
     policy = dict(DEFAULT_SEVERITY_POLICY)
     for key, default in DEFAULT_SEVERITY_POLICY.items():
@@ -214,6 +391,74 @@ def _config_policy_findings(config: LaunchGuardianConfig) -> list[Finding]:
             )
         )
     return findings
+
+
+def _invalid_disposition_finding(config_path: Path, description: str) -> Finding:
+    return _disposition_policy_finding(
+        title="Finding disposition configuration is invalid",
+        severity="high",
+        status="open",
+        config_path=config_path,
+        description=description,
+        risk=(
+            "Malformed or broad disposition configuration could make scanner review "
+            "ambiguous, so it is rejected without changing any finding."
+        ),
+        recommendation=(
+            "Use an exact Semgrep rule ID and provide status, reason, evidence, "
+            "approved_by, and approved_on."
+        ),
+        blocks_launch=True,
+    )
+
+
+def _disposition_policy_finding(
+    *,
+    title: str,
+    severity: str,
+    status: str,
+    config_path: Path | None,
+    description: str,
+    risk: str,
+    recommendation: str,
+    blocks_launch: bool,
+) -> Finding:
+    return Finding(
+        title=title,
+        severity=severity,
+        status=status,
+        category="config_policy",
+        source="config",
+        file_path=str(config_path or ""),
+        description=description,
+        risk=risk,
+        recommendation=recommendation,
+        related_gate="Gate 20 — Launch Decision",
+        blocks_launch=blocks_launch,
+    )
+
+
+def _meaningful_review_text(value: str) -> bool:
+    normalized = value.strip().lower()
+    return bool(normalized) and normalized not in {
+        "-",
+        "?",
+        "n/a",
+        "na",
+        "none",
+        "not applicable",
+        "tbd",
+        "todo",
+        "unknown",
+    }
+
+
+def _valid_approval_date(value: str) -> bool:
+    try:
+        parsed = date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    return parsed.isoformat() == value and parsed <= date.today()
 
 
 def _nested_dict(data: dict[str, Any], key: str) -> dict[str, Any]:

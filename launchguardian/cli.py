@@ -9,6 +9,7 @@ from .config import (
     EXTERNAL_SCANNERS,
     SCANNER_GATES,
     LaunchGuardianConfig,
+    apply_finding_dispositions,
     load_launchguardian_config,
 )
 from .config_discovery import (
@@ -190,7 +191,30 @@ def scan_target(
             scanner_config=scanner_config,
         )
     )
-    findings = [*lgf_findings, *scanner_config.config_findings, *scanner_findings]
+    scanner_findings, disposition_policy_findings = apply_finding_dispositions(
+        scanner_findings, scanner_config
+    )
+    for scanner_name, availability in scanner_availability.items():
+        if availability == "disabled":
+            continue
+        scanner_blocking_counts[scanner_name] = sum(
+            1
+            for finding in scanner_findings
+            if finding.source == scanner_name
+            and finding.blocks_launch
+            and finding.status == "open"
+        )
+    findings = [
+        *lgf_findings,
+        *scanner_config.config_findings,
+        *disposition_policy_findings,
+        *scanner_findings,
+    ]
+    validation_findings = [
+        *lgf_findings,
+        *scanner_config.config_findings,
+        *disposition_policy_findings,
+    ]
     report = ValidationReport(
         target=config.target,
         mode=validation_mode,
@@ -199,7 +223,7 @@ def scan_target(
         lgf_validation_skipped=skip_lgf_validation,
         strict_scanners=effective_strict_scanners,
         findings=findings,
-        lgf_config_valid=not _has_blocking_open_findings([*lgf_findings, *scanner_config.config_findings]),
+        lgf_config_valid=not _has_blocking_open_findings(validation_findings),
         scanner_availability=scanner_availability,
         scanner_counts=scanner_counts,
         scanner_blocking_counts=scanner_blocking_counts,

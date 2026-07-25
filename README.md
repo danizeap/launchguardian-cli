@@ -213,6 +213,15 @@ severity_policy:
   high_blocks: true
   medium_blocks: false
   low_blocks: false
+
+finding_dispositions:
+  - source: semgrep
+    rule_id: python.lang.compatibility.python36.python36-compatibility-Popen1
+    status: not_applicable
+    reason: "The rule targets Python versions below the supported runtime floor."
+    evidence: "pyproject.toml declares requires-python >=3.11."
+    approved_by: "Release owner"
+    approved_on: "2026-07-25"
 ```
 
 Config precedence is:
@@ -226,6 +235,33 @@ Scanners may be disabled in config, but disabled scanners are shown clearly in M
 Native scanner exclusions apply to `frontend_exposure` and `api_surface`. Exclusions reduce coverage and should be reviewed carefully; they do not hide `launchguardian.yml` or required LGF files from config discovery.
 
 `severity_policy.critical_blocks: false` is not allowed silently. LaunchGuardian emits a blocking config finding because Critical findings are canonical launch blockers.
+
+### Reviewed Finding Dispositions
+
+`finding_dispositions` provides a narrow, auditable alternative to hiding a
+reviewed Semgrep result with an inline ignore. The current implementation
+supports only:
+
+- `source: semgrep`
+- an exact `rule_id` with no wildcard characters
+- `status: not_applicable`
+- non-placeholder `reason`, `evidence`, and `approved_by` fields
+- a valid, non-future ISO `approved_on` date
+
+The raw Semgrep result is never modified. The normalized finding remains in
+JSON and Markdown with its original severity and `blocks_launch` value, plus
+the disposition record. Its status becomes `not_applicable`, so it is no
+longer an *open* blocker. A scan that relies on at least one disposition
+reports `APPROVED_WITH_DISPOSITIONS`, not plain `APPROVED`.
+
+Malformed, duplicate, or wildcard dispositions create blocking configuration
+findings and change no scanner result. A disposition that matches no current
+finding is reported as unused and cannot match a renamed rule. Critical
+findings refuse disposition and remain blocking.
+
+The `approved_by` field is auditable project metadata, not authenticated proof
+of a human identity. Release reviewers must confirm the record and its
+evidence through their normal code-review or change-approval process.
 
 ## Semgrep Scanning
 
