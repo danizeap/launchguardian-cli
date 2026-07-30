@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from ..models import Finding
-from .base import ScannerExecutionError, ScannerResult, utf8_scanner_environment
+from .base import (
+    ScannerExecutionError,
+    ScannerResult,
+    read_raw_scanner_output,
+    utf8_scanner_environment,
+)
 
 
 SEMGREP_CODE_GATE = "Gate 3 — Code Security"
@@ -60,10 +65,10 @@ class SemgrepScanner:
                 f"Semgrep timed out after 900 seconds while scanning the local target path."
             ) from exc
         if result.returncode not in {0, 1}:
-            raise ScannerExecutionError("Semgrep failed while scanning the local target path.")
-
-        if not raw_output_path.exists():
-            raw_output_path.write_text('{"results": []}\n', encoding="utf-8")
+            raise ScannerExecutionError(
+                "Semgrep failed while scanning the local target path."
+                + _engine_diagnostic(result.stderr, result.stdout)
+            )
 
         findings = _normalize_semgrep_output(raw_output_path)
         return ScannerResult(
@@ -90,13 +95,56 @@ def _scanner_unavailable_finding(*, blocks_launch: bool = False) -> Finding:
     )
 
 
+def _engine_diagnostic(*streams: str | None) -> str:
+    """Explain a known platform failure so the operator can act on it."""
+    haystack = " ".join(stream or "" for stream in streams).lower()
+    if "socketpair" in haystack or "rpc subprocess exited" in haystack:
+        return (
+            " The Semgrep engine could not create the local socket pair it uses "
+            "to talk to its core process. This is a known platform limitation "
+            "on native Windows, not a finding. Run the scan under WSL, in the "
+            "official semgrep container, or in Linux CI, and treat this local "
+            "result as no scan rather than a clean scan."
+        )
+    return ""
+
+
+def _fatal_semgrep_errors(raw_data: dict[str, Any]) -> list[str]:
+    """Return error-level entries that mean the scan did not fully run."""
+    errors = raw_data.get("errors")
+    if not isinstance(errors, list):
+        return []
+    fatal: list[str] = []
+    for entry in errors:
+        if not isinstance(entry, dict):
+            continue
+        level = _safe_text(entry.get("level")).lower()
+        if level not in {"error", "fatal"}:
+            continue
+        detail = _safe_text(
+            entry.get("long_msg") or entry.get("message") or entry.get("type")
+        )
+        fatal.append(detail or "unspecified Semgrep error")
+    return fatal
+
+
 def _normalize_semgrep_output(raw_output_path: Path) -> list[Finding]:
+    text = read_raw_scanner_output(raw_output_path, scanner="Semgrep")
     try:
-        raw_data = json.loads(raw_output_path.read_text(encoding="utf-8") or "{}")
+        raw_data = json.loads(text)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ScannerExecutionError(
             "Semgrep produced invalid UTF-8 JSON output."
         ) from exc
+
+    if isinstance(raw_data, dict):
+        fatal = _fatal_semgrep_errors(raw_data)
+        if fatal:
+            raise ScannerExecutionError(
+                "Semgrep reported errors that mean the scan did not fully run, "
+                "so its findings are incomplete: "
+                + "; ".join(fatal[:5])[:1000]
+            )
 
     results = raw_data.get("results", []) if isinstance(raw_data, dict) else []
     if not isinstance(results, list):

@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from ..models import Finding
-from .base import ScannerExecutionError, ScannerResult, utf8_scanner_environment
+from .base import (
+    ScannerExecutionError,
+    ScannerResult,
+    read_raw_scanner_output,
+    utf8_scanner_environment,
+)
 
 
 GITLEAKS_RELATED_GATE = "Gate 4 — Secrets & Config Hygiene"
@@ -64,9 +69,6 @@ class GitleaksScanner:
         if result.returncode != 0:
             raise ScannerExecutionError("Gitleaks failed while scanning the local target path.")
 
-        if not raw_output_path.exists():
-            raw_output_path.write_text("[]\n", encoding="utf-8")
-
         findings = _normalize_gitleaks_output(raw_output_path)
         return ScannerResult(
             name=self.name,
@@ -93,8 +95,9 @@ def _scanner_unavailable_finding(*, blocks_launch: bool = False) -> Finding:
 
 
 def _normalize_gitleaks_output(raw_output_path: Path) -> list[Finding]:
+    text = read_raw_scanner_output(raw_output_path, scanner="Gitleaks")
     try:
-        raw_data = json.loads(raw_output_path.read_text(encoding="utf-8") or "[]")
+        raw_data = json.loads(text)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ScannerExecutionError(
             "Gitleaks produced invalid UTF-8 JSON output."
