@@ -20,6 +20,7 @@ from .config_discovery import (
 )
 from .launch_policy import validate_gate_applicability
 from .models import Finding, ValidationReport
+from .repo_state import describe as describe_repo_state
 from .report_writer import write_normalized_findings, write_reports
 from .scanners.api_surface import ApiSurfaceScanner
 from .scanners.base import ScannerExecutionError
@@ -111,12 +112,15 @@ def validate_lgf(
 ) -> int:
     target_finding = validate_target(target)
     if target_finding is not None:
+        commit, clean = describe_repo_state(target.resolve())
         report = ValidationReport(
             target=target.resolve(),
             mode="framework" if framework_mode else "project",
             validation_mode="framework" if framework_mode else "project",
             findings=[target_finding],
             lgf_config_valid=False,
+            scanned_commit=commit,
+            worktree_clean=clean,
         )
         write_reports(report, output_dir)
         return EXIT_CONFIG_ERROR
@@ -124,12 +128,15 @@ def validate_lgf(
     config = discover_config(target)
     findings = _lgf_findings(config, framework_mode=framework_mode)
 
+    commit, clean = describe_repo_state(config.target)
     report = ValidationReport(
         target=config.target,
         mode="framework" if framework_mode else "project",
         validation_mode="framework" if framework_mode else "project",
         findings=findings,
         lgf_config_valid=not _has_blocking_open_findings(findings),
+        scanned_commit=commit,
+        worktree_clean=clean,
     )
     markdown_path, json_path = write_reports(report, output_dir)
 
@@ -158,6 +165,7 @@ def scan_target(
     validation_mode = _scan_validation_mode(
         framework_mode=framework_mode, skip_lgf_validation=skip_lgf_validation
     )
+    _scan_commit, _scan_clean = describe_repo_state(report_target)
     if target_finding is not None:
         report = ValidationReport(
             target=report_target,
@@ -169,6 +177,8 @@ def scan_target(
             findings=[target_finding, *scanner_config.config_findings],
             lgf_config_valid=False,
             launchguardian_config=scanner_config.to_report_dict(report_dir),
+            scanned_commit=_scan_commit,
+            worktree_clean=_scan_clean,
         )
         write_reports(report, report_dir)
         write_normalized_findings(report.findings, report_dir)
@@ -224,6 +234,8 @@ def scan_target(
         strict_scanners=effective_strict_scanners,
         findings=findings,
         lgf_config_valid=not _has_blocking_open_findings(validation_findings),
+        scanned_commit=_scan_commit,
+        worktree_clean=_scan_clean,
         scanner_availability=scanner_availability,
         scanner_counts=scanner_counts,
         scanner_blocking_counts=scanner_blocking_counts,

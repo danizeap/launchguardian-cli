@@ -120,6 +120,8 @@ class ValidationReport:
     scanner_counts: dict[str, int] = field(default_factory=dict)
     scanner_blocking_counts: dict[str, int] = field(default_factory=dict)
     launchguardian_config: dict[str, Any] = field(default_factory=dict)
+    scanned_commit: str | None = None
+    worktree_clean: bool | None = None
     generated_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     )
@@ -198,6 +200,8 @@ class ValidationReport:
             "generated_at": self.generated_at,
             "launchguardian_version": __version__,
             "target": str(self.target),
+            "scanned_commit": self.scanned_commit,
+            "worktree_clean": self.worktree_clean,
             "mode": self.mode,
             "validation_mode": self.validation_mode,
             "scan_mode": self.scan_mode,
